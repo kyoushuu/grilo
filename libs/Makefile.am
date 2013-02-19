@@ -8,10 +8,10 @@
 SUBDIRS =
 
 if BUILD_GRILO_NET
-SUBDIRS += net
+SUBDIRS += net pls
 endif
 
-DIST_SUBDIRS = net
+DIST_SUBDIRS = net pls
 
 MAINTAINERCLEANFILES = \
 	*.in \
