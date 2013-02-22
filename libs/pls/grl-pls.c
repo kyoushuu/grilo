@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2013 Collabora Ltd.
  *
- * Authors: Mateu Batle Sastre <mateu.batle@collabora.com>
+ * Author: Mateu Batle Sastre <mateu.batle@collabora.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -25,13 +25,15 @@
 #endif
 
 #include "grl-pls.h"
+#include "../../src/grl-operation-priv.h"
 #include "../../src/grl-sync-priv.h"
 
 #include <gio/gio.h>
 #include <grilo.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 #include <totem-pl-parser.h>
+#include <totem-pl-parser-mini.h>
 
 /* --------- Logging  -------- */
 
@@ -44,15 +46,17 @@ GRL_LOG_DOMAIN_STATIC(libpls_log_domain);
   G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","    \
   G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","    \
   G_FILE_ATTRIBUTE_STANDARD_TYPE ","            \
-  G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","       \
   G_FILE_ATTRIBUTE_TIME_MODIFIED ","            \
   G_FILE_ATTRIBUTE_THUMBNAIL_PATH ","           \
   G_FILE_ATTRIBUTE_THUMBNAILING_FAILED
+
+/* -------- Data structures ------- */
 
 struct _GrlPlsEntry {
   gboolean is_valid;
   gchar *uri;
   gchar *title;
+  gchar *genre;
   gchar *author;
   gchar *album;
   gchar *mime;
@@ -69,7 +73,35 @@ struct _GrlPlsPrivate {
   gpointer userdata;
   guint operation_id;
   GArray *entries;
+  GCancellable *cancellable;
 };
+
+struct OperationState {
+  GrlSource *source;
+  guint operation_id;
+  gboolean cancelled;
+  gboolean completed;
+  gboolean started;
+  struct _GrlPlsPrivate *priv;
+};
+
+/* -------- Prototypes ------- */
+
+static void
+grl_pls_cancel_cb (struct OperationState *op_state);
+
+/* -------- Functions ------- */
+
+static void
+grl_pls_init (void)
+{
+  static gboolean initialized = FALSE;
+
+  if (!initialized) {
+    GRL_LOG_DOMAIN_INIT (libpls_log_domain, "pls");
+    initialized = TRUE;
+  }
+}
 
 static gboolean
 mime_is_video (const gchar *mime)
@@ -92,28 +124,229 @@ mime_is_image (const gchar *mime)
 static gboolean
 mime_is_media (const gchar *mime, GrlTypeFilter filter)
 {
+  g_return_val_if_fail (mime, FALSE);
+
   if (!mime)
     return FALSE;
   if (!strcmp (mime, "inode/directory"))
     return TRUE;
-  if (filter & GRL_TYPE_FILTER_AUDIO && mime_is_audio (mime))
+  if ((filter & GRL_TYPE_FILTER_AUDIO) && mime_is_audio (mime))
     return TRUE;
-  if (filter & GRL_TYPE_FILTER_VIDEO && mime_is_video (mime))
+  if ((filter & GRL_TYPE_FILTER_VIDEO) && mime_is_video (mime))
     return TRUE;
-  if (filter & GRL_TYPE_FILTER_IMAGE && mime_is_image (mime))
+  if ((filter & GRL_TYPE_FILTER_IMAGE) && mime_is_image (mime))
     return TRUE;
   return FALSE;
+}
+
+static void
+operation_state_free (struct OperationState *op_state)
+{
+  g_object_unref (op_state->source);
+  g_free (op_state);
+}
+
+/*
+ * operation_set_finished:
+ *
+ * Sets operation as finished (we have already emitted the last result
+ * to the user).
+ */
+static void
+operation_set_finished (guint operation_id)
+{
+  GRL_DEBUG ("%s (%d)", __FUNCTION__, operation_id);
+
+  grl_operation_remove (operation_id);
+}
+
+/*
+ * operation_set_completed:
+ *
+ * Sets the operation as completed (we have already received the last
+ * result in the relay cb. If it is finsihed it is also completed).
+ */
+static void
+operation_set_completed (guint operation_id)
+{
+  struct OperationState *op_state;
+
+  GRL_DEBUG ("%s (%d)", __FUNCTION__, operation_id);
+
+  op_state = grl_operation_get_private_data (operation_id);
+
+  if (op_state) {
+    op_state->completed = TRUE;
+  }
+}
+
+/*
+ * operation_is_completed:
+ *
+ * Checks if operation is completed (we have already received the last
+ * result in the relay cb. A finished operation is also a completed
+ * operation).
+ */
+static gboolean
+operation_is_completed (guint operation_id)
+{
+  struct OperationState *op_state;
+
+  op_state = grl_operation_get_private_data (operation_id);
+
+  return !op_state || op_state->completed;
+}
+
+/*
+ * operation_set_cancelled:
+ *
+ * Sets the operation as cancelled (a valid operation, i.e., not
+ * finished, was cancelled)
+ */
+static void
+operation_set_cancelled (guint operation_id)
+{
+  struct OperationState *op_state;
+
+  GRL_DEBUG ("%s (%d)", __FUNCTION__, operation_id);
+
+  op_state = grl_operation_get_private_data (operation_id);
+
+  if (op_state) {
+    op_state->cancelled = TRUE;
+  }
+}
+
+/*
+ * operation_is_cancelled:
+ *
+ * Checks if operation is cancelled (a valid operation that was
+ * cancelled).
+ */
+static gboolean
+operation_is_cancelled (guint operation_id)
+{
+  struct OperationState *op_state;
+
+  op_state = grl_operation_get_private_data (operation_id);
+
+  return op_state && op_state->cancelled;
+}
+
+/*
+ * operation_set_ongoing:
+ *
+ * Sets the operation as ongoing (operation is valid, not finished, not started
+ * and not cancelled)
+ */
+static void
+operation_set_ongoing (GrlSource *source, guint operation_id, struct _GrlPlsPrivate *priv)
+{
+  struct OperationState *op_state;
+
+  GRL_DEBUG ("%s (%d)", __FUNCTION__, operation_id);
+
+  op_state = g_new0 (struct OperationState, 1);
+  op_state->source = g_object_ref (source);
+  op_state->operation_id = operation_id;
+  op_state->priv = priv;
+
+  grl_operation_set_private_data (operation_id,
+                                  op_state,
+                                  (GrlOperationCancelCb) grl_pls_cancel_cb,
+                                  (GDestroyNotify) operation_state_free);
+}
+
+/*
+ * operation_is_ongoing:
+ *
+ * Checks if operation is ongoing (operation is valid, and it is not
+ * finished nor cancelled).
+ */
+static gboolean
+operation_is_ongoing (guint operation_id)
+{
+  struct OperationState *op_state;
+
+  op_state = grl_operation_get_private_data (operation_id);
+
+  return op_state && !op_state->cancelled;
+}
+
+static void
+grl_pls_cancel_cb (struct OperationState *op_state)
+{
+  if (!operation_is_ongoing (op_state->operation_id)) {
+    GRL_DEBUG ("Tried to cancel invalid or already cancelled operation. "
+               "Skipping...");
+    return;
+  }
+
+  /* Mark the operation as finished, if the source does not implement
+     cancellation or it did not make it in time, we will not emit the results
+     for this operation in any case.  At any rate, we will not free the
+     operation data until we are sure the plugin won't need it any more. In the
+     case of operations dealing with multiple results, like browse() or
+     search(), this will happen when it emits remaining = 0 (which can be
+     because it did not cancel the op or because it managed to cancel it and is
+     signaling so) */
+  operation_set_cancelled (op_state->operation_id);
+
+  /* If the source provides an implementation for operation cancellation,
+     let's use that to avoid further unnecessary processing in the plugin */
+  if (!g_cancellable_is_cancelled (op_state->priv->cancellable)) {
+    g_cancellable_cancel (op_state->priv->cancellable);
+  }
 }
 
 gboolean
 grl_pls_mime_is_playlist (const gchar *mime)
 {
-  return  g_str_has_prefix (mime, "audio/x-ms-asx") ||
-          //g_str_has_prefix (mime, "audio/x-ms-wax") ||
-          //g_str_has_prefix (mime, "video/x-ms-wvx") ||
-          g_str_has_prefix (mime, "audio/mpegurl") ||
-          g_str_has_prefix (mime, "audio/x-mpegurl") ||
-          g_str_has_prefix (mime, "audio/x-scpls");
+  g_return_val_if_fail (mime, FALSE);
+
+  return g_str_has_prefix (mime, "audio/x-ms-asx") ||
+         //g_str_has_prefix (mime, "audio/x-ms-wax") ||
+         //g_str_has_prefix (mime, "video/x-ms-wvx") ||
+         g_str_has_prefix (mime, "audio/mpegurl") ||
+         g_str_has_prefix (mime, "audio/x-mpegurl") ||
+         g_str_has_prefix (mime, "audio/x-scpls");
+}
+
+gboolean
+grl_pls_file_is_playlist (const gchar *filename)
+{
+  g_return_val_if_fail (filename, FALSE);
+
+  return totem_pl_parser_can_parse_from_filename (filename, FALSE);
+}
+
+gboolean
+grl_pls_media_is_playlist (GrlMedia *media)
+{
+  const gchar *playlist_url;
+  gchar *filename;
+  gchar *scheme;
+
+  g_return_val_if_fail (media, FALSE);
+
+  playlist_url = grl_media_get_url (media);
+  if (!playlist_url) {
+    return FALSE;
+  }
+
+  scheme = g_uri_parse_scheme (playlist_url);
+  if (!scheme) {
+    // we assume it is pathname
+    filename = g_strdup (scheme);
+  } else if (!g_strcmp0 (scheme, "file")) {
+    filename = g_filename_from_uri (playlist_url, NULL, NULL);
+    g_free (scheme);
+  } else {
+    g_free (scheme);
+    return FALSE;
+  }
+
+  return grl_pls_file_is_playlist (filename);
 }
 
 static void
@@ -123,41 +356,99 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
                                   gpointer user_data)
 {
   struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
-
   struct _GrlPlsEntry entry;
+  GError *_error;
+
+  g_return_if_fail (TOTEM_IS_PL_PARSER (parser));
+  g_return_if_fail (uri);
+  g_return_if_fail (metadata);
+  g_return_if_fail (user_data);
+
+  /* Ignore elements after operation has completed */
+  if (operation_is_completed (priv->operation_id)) {
+    GRL_WARNING ("Entry parsed after playlist completed for operation %d",
+                 priv->operation_id);
+    return;
+  }
+
+  /* Check if cancelled */
+  if (operation_is_cancelled (priv->operation_id)) {
+    GRL_DEBUG ("Operation was cancelled, skipping result until getting the last one");
+    /* Wait for the last element */
+    _error = g_error_new (GRL_CORE_ERROR,
+                          GRL_CORE_ERROR_OPERATION_CANCELLED,
+                          "Operation was cancelled");
+    priv->callback (priv->source, priv->operation_id, NULL, 0, priv->userdata, _error);
+    g_error_free (_error);
+    return;
+  }
+
   entry.uri = g_strdup (uri);
   entry.title = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_TITLE));
+  entry.genre = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_GENRE));
   entry.author = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_AUTHOR));
   entry.album = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_ALBUM));
   entry.thumbnail = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_IMAGE_URI));
   entry.mime = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_CONTENT_TYPE));
-  entry.duration = totem_pl_parser_parse_duration(g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_DURATION), FALSE);
+  entry.duration = totem_pl_parser_parse_duration (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_DURATION), FALSE);
 
-  g_array_append_val(priv->entries, entry);
+  GRL_DEBUG ("New playlist entry: URI=%s title=%s genre=%s author=%s album=%s thumbnail=%s mime=%s duration=%lld",
+      entry.uri, entry.title, entry.genre, entry.author, entry.album, entry.thumbnail, entry.mime, entry.duration);
+
+  g_array_append_vals(priv->entries, &entry, 1);
 }
 
 static GrlMedia*
-grl_media_from_pls_entry(struct _GrlPlsEntry *entry)
+grl_media_new_from_uri (gchar * uri)
 {
-  GrlMedia *media = NULL;
+  GrlMedia *media;
+  gchar *filename = NULL;
   gchar *str;
   gchar *extension;
   const gchar *mime;
   GError *error = NULL;
+  GFile *file = NULL;
+  GFileInfo *info = NULL;
 
-  GFile *file = g_file_new_for_path (entry->uri);
-  GFileInfo *info = g_file_query_info (file,
-                                       FILE_ATTRIBUTES,
-                                       0,
-                                       NULL,
-                                       &error);
+  g_return_val_if_fail (uri, NULL);
 
-  if (error) {
-    return 0;
+  GRL_DEBUG ("grl_media_new_from_uri: uri=%s", uri);
+
+  str = g_uri_parse_scheme (uri);
+  if (!str) {
+    // we assume it is pathname
+    filename = g_strdup (str);
+  } else if (!g_strcmp0 (str, "file")) {
+    filename = g_filename_from_uri (uri, NULL, NULL);
+    g_free (str);
+  } else {
+    GRL_WARNING ("URI found in playlist not handled, scheme=%s", str);
+    g_free (str);
+    goto out;
+  }
+
+  file = g_file_new_for_path (filename);
+  if (!file)
+    goto out;
+
+  info = g_file_query_info (file,
+                            FILE_ATTRIBUTES,
+                            0,
+                            NULL,
+                            &error);
+  if (!info) {
+    if (error) {
+      GRL_WARNING ("Unable to get file information error code=%d msg=%s", error->code, error->message);
+      g_error_free (error);
+    }
+    goto out;
   }
 
   mime = g_file_info_get_content_type (info);
   if (g_file_info_get_file_type (info) == G_FILE_TYPE_DIRECTORY) {
+    media = GRL_MEDIA (grl_media_box_new ());
+  } else if (grl_pls_file_is_playlist(filename)) {
+    GRL_DEBUG ("Playlist found -> returning media box");
     media = GRL_MEDIA (grl_media_box_new ());
   } else if (mime_is_video (mime)) {
     media = grl_media_video_new ();
@@ -208,19 +499,47 @@ grl_media_from_pls_entry(struct _GrlPlsEntry *entry)
     }
   }
 
-  g_object_unref (info);
-
   /* URL */
   str = g_file_get_uri (file);
   grl_media_set_url (media, str);
   g_free (str);
 
-  /* Childcount */
-  if (GRL_IS_MEDIA_BOX (media)) {
-    //set_container_childcount (path, media, only_fast, options);
-  }
+  GRL_DEBUG ("Returning media=%p", media);
 
-  g_object_unref (file);
+out:
+
+  if (info)
+    g_object_unref (info);
+  if (file)
+    g_object_unref (file);
+  if (filename)
+    g_free (filename);
+
+  return media;
+}
+
+static GrlMedia*
+grl_media_new_from_pls_entry (struct _GrlPlsEntry *entry)
+{
+  GrlMedia *media;
+
+  g_return_val_if_fail (entry, NULL);
+
+  media = grl_media_new_from_uri (entry->uri);
+  if (media) {
+    if (entry->duration)
+      grl_media_set_duration (media, entry->duration);
+
+    if (GRL_IS_MEDIA_AUDIO(media)) {
+      GrlMediaAudio *audio = GRL_MEDIA_AUDIO(media);
+      if (entry->album)
+        grl_media_audio_set_album (audio, entry->album);
+      if (entry->author)
+        grl_media_audio_set_artist (audio, entry->author);
+      if (entry->genre)
+        grl_media_audio_set_genre (audio, entry->genre);
+    }
+  }
 
   return media;
 }
@@ -233,31 +552,50 @@ grl_pls_playlist_parse_cb (GObject *object,
   TotemPlParser *parser = (TotemPlParser *) object;
   TotemPlParserResult retval;
   struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
-  int remaining;
-  int i;
-
   GError *error = NULL;
+  guint skip;
+  guint count;
+  guint remaining;
+  guint i;
+
+  g_return_if_fail (object);
+  g_return_if_fail (result);
+  g_return_if_fail (user_data);
+
   retval = totem_pl_parser_parse_finish (parser, result, &error);
   if (retval != TOTEM_PL_PARSER_RESULT_SUCCESS) {
-    g_error ("Playlist parsing failed: %s", error->message);
+    GRL_ERROR ("Playlist parsing failed, retval=%d code=%d msg=%s", retval, error->code, error->message);
     g_error_free (error);
   }
 
-  remaining = priv->entries->len;
-  for (i = 0;i < priv->entries->len;i++) {
+  operation_set_completed (priv->operation_id);
+
+  skip = grl_operation_options_get_skip (priv->options);
+  if (skip > priv->entries->len)
+    skip = priv->entries->len;
+
+  count = grl_operation_options_get_count (priv->options);
+  if (skip + count > priv->entries->len)
+    count = priv->entries->len - skip;
+
+  remaining = priv->entries->len - skip;
+  for (i = 0;i < count;i++, remaining--) {
     struct _GrlPlsEntry *entry;
-    entry = &g_array_index (priv->entries, struct _GrlPlsEntry, i);
-    remaining--;
+    entry = &g_array_index (priv->entries, struct _GrlPlsEntry, skip + i);
     if (entry) {
-      GrlMedia *content = grl_media_from_pls_entry(entry);
-      priv->callback (priv->source,
-               priv->operation_id,
-               content,
-               remaining,
-               priv->userdata,
-               NULL);
+      GrlMedia *content = grl_media_new_from_pls_entry (entry);
+      if (content) {
+        priv->callback (priv->source,
+                 priv->operation_id,
+                 content,
+                 remaining,
+                 priv->userdata,
+                 NULL);
+      }
     }
   }
+
+  operation_set_finished (priv->operation_id);
 }
 
 static gboolean
@@ -267,7 +605,6 @@ check_options (GrlSource *source,
 {
   GrlCaps *caps;
 
-  /* FIXME: that check should be in somewhere in GrlOperationOptions */
   if (grl_operation_options_get_count (options) == 0)
     return FALSE;
 
@@ -281,9 +618,6 @@ check_options (GrlSource *source,
   }
 }
 
-// TODO: list of desired keys, use grl_source_resolve ...
-// TODO: support GrlOperationOptions
-// TODO: called from grl_filesystem_source_browse (GrlSource *source, GrlSourceBrowseSpec *bs)
 /**
  * grl_pls_browse:
  * @source: a source
@@ -310,28 +644,33 @@ grl_pls_browse (GrlSource *source,
                 GrlSourceResultCb callback,
                 gpointer userdata)
 {
-  // TODO: check input parameters
+  grl_pls_init();
+
   TotemPlParser *parser;
   const char *playlist_url;
   struct _GrlPlsPrivate *priv;
 
   g_return_val_if_fail (GRL_IS_SOURCE (source), 0);
+  g_return_val_if_fail (GRL_IS_MEDIA (playlist), 0);
   g_return_val_if_fail (GRL_IS_OPERATION_OPTIONS (options), 0);
   g_return_val_if_fail (callback != NULL, 0);
   g_return_val_if_fail (grl_source_supported_operations (source) &
                         GRL_OP_BROWSE, 0);
   g_return_val_if_fail (check_options (source, GRL_OP_BROWSE, options), 0);
 
-  parser = totem_pl_parser_new ();
-  if (!parser) {
+  playlist_url = grl_media_get_url (playlist);
+  if (!playlist_url) {
+    GRL_WARNING ("Unable to get URL from Media");
     return 0;
   }
 
-  g_object_set (parser, "recurse", FALSE, "disable-unsafe", TRUE, NULL);
-  g_signal_connect (G_OBJECT (parser), "entry-parsed", G_CALLBACK (grl_pls_playlist_entry_parsed_cb), NULL);
+  if (!grl_pls_media_is_playlist (playlist)) {
+    GRL_WARNING ("URI=%s is not a playlist", playlist_url);
+    return 0;
+  }
 
-  playlist_url = grl_media_get_url (playlist);
-  if (!playlist_url) {
+  parser = totem_pl_parser_new ();
+  if (!parser) {
     return 0;
   }
 
@@ -339,23 +678,40 @@ grl_pls_browse (GrlSource *source,
   if (!priv) {
     return 0;
   }
-  // TODO: what to copy here ?
-  priv->source = source;
-  priv->playlist = playlist;
-  priv->keys = keys;
-  priv->options = options;
+
+  // disable-unsafe: if FALSE the parser will not parse unsafe locations,
+  // such as local devices and local files if the playlist isn't local.
+  // This is useful if the library is parsing a playlist from a remote
+  // location such as a website.
+  g_object_set (parser, "recurse", FALSE, "disable-unsafe", TRUE, NULL);
+  g_signal_connect (G_OBJECT (parser),
+                    "entry-parsed",
+                    G_CALLBACK (grl_pls_playlist_entry_parsed_cb),
+                    priv);
+
+  priv->source = g_object_ref (source);
+  priv->playlist = g_object_ref (playlist);
+  // TODO: what to do with keys
+  priv->keys = 0;
+  priv->options = grl_operation_options_copy (options);
   priv->callback = callback;
   priv->userdata = userdata;
-  priv->operation_id = 0;
-  priv->entries = g_array_new(FALSE, FALSE, sizeof(struct _GrlPlsEntry));
+  priv->operation_id = grl_operation_generate_id ();
+  priv->entries = g_array_new (FALSE, FALSE, sizeof(struct _GrlPlsEntry));
+  priv->cancellable = g_cancellable_new ();
 
-  // TODO: use GCancellable ?
-  totem_pl_parser_parse_async (parser, playlist_url, FALSE, NULL, grl_pls_playlist_parse_cb, priv);
+  operation_set_ongoing (source, priv->operation_id, priv);
+
+  totem_pl_parser_parse_async (parser,
+                               playlist_url,
+                               FALSE,
+                               priv->cancellable,
+                               grl_pls_playlist_parse_cb,
+                               priv);
 
   g_object_unref (parser);
 
-  // TODO: return proper operation identifier
-  return 1;
+  return priv->operation_id;
 }
 
 static void
@@ -445,282 +801,3 @@ grl_pls_browse_sync (GrlSource *source,
   return result;
 }
 
-#if 0
-static void
-produce_from_path (GrlSourceBrowseSpec *bs, const gchar *path, GrlOperationOptions *options)
-{
-  GDir *dir;
-  GError *error = NULL;
-  const gchar *entry;
-  guint skip, count;
-  GList *entries = NULL;
-  GList *iter;
-
-  /* Open directory */
-  GRL_DEBUG ("Opening directory '%s'", path);
-  dir = g_dir_open (path, 0, &error);
-  if (error) {
-    GRL_DEBUG ("Failed to open directory '%s': %s", path, error->message);
-    bs->callback (bs->source, bs->operation_id, NULL, 0, bs->user_data, error);
-    g_error_free (error);
-    return;
-  }
-
-  /* Filter out media and directories */
-  while ((entry = g_dir_read_name (dir)) != NULL) {
-    gchar *file;
-    if (strcmp (path, G_DIR_SEPARATOR_S)) {
-      file = g_strconcat (path, G_DIR_SEPARATOR_S, entry, NULL);
-    } else {
-      file = g_strconcat (path, entry, NULL);
-    }
-    if (file_is_valid_content (file, FALSE, options)) {
-      entries = g_list_prepend (entries, file);
-    }
-  }
-
-  /* Apply skip and count */
-  skip = grl_operation_options_get_skip (bs->options);
-  count = grl_operation_options_get_count (bs->options);
-  iter = entries;
-  while (iter) {
-    gboolean remove;
-    GList *tmp;
-    if (skip > 0)  {
-      skip--;
-      remove = TRUE;
-    } else if (count > 0) {
-      count--;
-      remove = FALSE;
-    } else {
-      remove = TRUE;
-    }
-    if (remove) {
-      tmp = iter;
-      iter = g_list_next (iter);
-      g_free (tmp->data);
-      entries = g_list_delete_link (entries, tmp);
-    } else {
-      iter = g_list_next (iter);
-    }
-  }
-
-  /* Emit results */
-  if (entries) {
-    /* Use the idle loop to avoid blocking for too long */
-    BrowseIdleData *idle_data = g_slice_new (BrowseIdleData);
-    gint global_count = grl_operation_options_get_count (bs->options);
-    idle_data->spec = bs;
-    idle_data->remaining = global_count - count - 1;
-    idle_data->path = path;
-    idle_data->entries = entries;
-    idle_data->current = entries;
-    idle_data->cancellable = g_cancellable_new ();
-    idle_data->id = bs->operation_id;
-    g_hash_table_insert (GRL_FILESYSTEM_SOURCE (bs->source)->priv->cancellables,
-                         GUINT_TO_POINTER (bs->operation_id),
-                         idle_data->cancellable);
-
-    g_idle_add (browse_emit_idle, idle_data);
-  } else {
-    /* No results */
-    bs->callback (bs->source,
-      bs->operation_id,
-      NULL,
-      0,
-      bs->user_data,
-      NULL);
-  }
-
-  g_dir_close (dir);
-}
-
-
-static gboolean
-browse_emit_idle (gpointer user_data)
-{
-  BrowseIdleData *idle_data;
-  guint count;
-  GrlFilesystemSource *fs_source;
-
-  GRL_DEBUG ("browse_emit_idle");
-
-  idle_data = (BrowseIdleData *) user_data;
-  fs_source = GRL_FILESYSTEM_SOURCE (idle_data->spec->source);
-
-  if (g_cancellable_is_cancelled (idle_data->cancellable)) {
-    GRL_DEBUG ("Browse operation %d (\"%s\") has been cancelled",
-               idle_data->id, idle_data->path);
-    idle_data->spec->callback(idle_data->spec->source,
-                              idle_data->id, NULL, 0,
-                              idle_data->spec->user_data, NULL);
-    goto finish;
-  }
-
-  count = 0;
-  do {
-    gchar *entry_path;
-    GrlMedia *content;
-    GrlOperationOptions *options = idle_data->spec->options;
-
-    entry_path = (gchar *) idle_data->current->data;
-    content = create_content (NULL,
-                              entry_path,
-                              grl_operation_options_get_flags (options)
-                              & GRL_RESOLVE_FAST_ONLY,
-                              FALSE,
-                              options);
-    g_free (idle_data->current->data);
-
-    idle_data->spec->callback (idle_data->spec->source,
-             idle_data->spec->operation_id,
-             content,
-             idle_data->remaining--,
-             idle_data->spec->user_data,
-             NULL);
-
-    idle_data->current = g_list_next (idle_data->current);
-    count++;
-  } while (count < BROWSE_IDLE_CHUNK_SIZE && idle_data->current);
-
-  if (!idle_data->current)
-    goto finish;
-
-  return TRUE;
-
-finish:
-    g_list_free (idle_data->entries);
-    g_hash_table_remove (fs_source->priv->cancellables,
-                         GUINT_TO_POINTER (idle_data->id));
-    g_object_unref (idle_data->cancellable);
-    g_slice_free (BrowseIdleData, idle_data);
-    return FALSE;
-}
-
-static GrlMedia *
-create_content (GrlMedia *content,
-                const gchar *path,
-                gboolean only_fast,
-    gboolean root_dir,
-                GrlOperationOptions *options)
-{
-  GrlMedia *media = NULL;
-  gchar *str;
-  gchar *extension;
-  const gchar *mime;
-  GError *error = NULL;
-
-  GFile *file = g_file_new_for_path (path);
-  GFileInfo *info = g_file_query_info (file,
-               FILE_ATTRIBUTES,
-               0,
-               NULL,
-               &error);
-
-  /* Update mode */
-  if (content) {
-    media = content;
-  }
-
-  if (error) {
-    GRL_DEBUG ("Failed to get info for file '%s': %s", path,
-               error->message);
-    if (!media) {
-      media = grl_media_new ();
-      grl_media_set_id (media,  root_dir ? NULL : path);
-    }
-
-    /* Title */
-    str = g_strdup (g_strrstr (path, G_DIR_SEPARATOR_S));
-    if (!str) {
-      str = g_strdup (path);
-    }
-
-    /* Remove file extension */
-    extension = g_strrstr (str, ".");
-    if (extension) {
-      *extension = '\0';
-    }
-
-    grl_media_set_title (media, str);
-    g_error_free (error);
-    g_free (str);
-  } else {
-    mime = g_file_info_get_content_type (info);
-
-    if (!media) {
-      if (g_file_info_get_file_type (info) == G_FILE_TYPE_DIRECTORY) {
-  media = GRL_MEDIA (grl_media_box_new ());
-      } else {
-  if (mime_is_video (mime)) {
-    media = grl_media_video_new ();
-  } else if (mime_is_audio (mime)) {
-    media = grl_media_audio_new ();
-  } else if (mime_is_image (mime)) {
-    media = grl_media_image_new ();
-  } else {
-    media = grl_media_new ();
-  }
-      }
-      grl_media_set_id (media,  root_dir ? NULL : path);
-    }
-
-    if (!GRL_IS_MEDIA_BOX (media)) {
-      grl_media_set_mime (media, mime);
-    }
-
-    /* Title */
-    str = g_strdup (g_file_info_get_display_name (info));
-
-    /* Remove file extension */
-    extension = g_strrstr (str, ".");
-    if (extension) {
-      *extension = '\0';
-    }
-
-    grl_media_set_title (media, str);
-    g_free (str);
-
-    /* Date */
-    GTimeVal time;
-    GDateTime *date_time;
-    g_file_info_get_modification_time (info, &time);
-    date_time = g_date_time_new_from_timeval_utc (&time);
-    grl_media_set_modification_date (media, date_time);
-    g_date_time_unref (date_time);
-
-    /* Thumbnail */
-    gboolean thumb_failed =
-      g_file_info_get_attribute_boolean (info,
-                                         G_FILE_ATTRIBUTE_THUMBNAILING_FAILED);
-    if (!thumb_failed) {
-      const gchar *thumb =
-        g_file_info_get_attribute_byte_string (info,
-                                               G_FILE_ATTRIBUTE_THUMBNAIL_PATH);
-      if (thumb) {
-  gchar *thumb_uri = g_filename_to_uri (thumb, NULL, NULL);
-  if (thumb_uri) {
-    grl_media_set_thumbnail (media, thumb_uri);
-    g_free (thumb_uri);
-  }
-      }
-    }
-
-    g_object_unref (info);
-  }
-
-  /* URL */
-  str = g_file_get_uri (file);
-  grl_media_set_url (media, str);
-  g_free (str);
-
-  /* Childcount */
-  if (GRL_IS_MEDIA_BOX (media)) {
-    set_container_childcount (path, media, only_fast, options);
-  }
-
-  g_object_unref (file);
-
-  return media;
-}
-#endif

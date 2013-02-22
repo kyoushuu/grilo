@@ -27,6 +27,10 @@
 
 gboolean grl_pls_mime_is_playlist (const gchar *mime);
 
+gboolean grl_pls_file_is_playlist (const gchar *filename);
+
+gboolean grl_pls_media_is_playlist (GrlMedia *media);
+
 guint grl_pls_browse (GrlSource *source,
                       GrlMedia *container,
                       const GList *keys,
