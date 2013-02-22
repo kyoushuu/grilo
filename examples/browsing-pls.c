@@ -1,4 +1,3 @@
-
 /*
  * Browsing in Grilo.
  * Shows the first BROWSE_CHUNK_SIZE elements of each browsable source
@@ -7,6 +6,10 @@
  */
 
 #include <grilo.h>
+#include <gio/gio.h>
+#include <glib.h>
+#include <glib/gprintf.h>
+#include "../libs/pls/grl-pls.h"
 
 #define GRL_LOG_DOMAIN_DEFAULT  example_log_domain
 GRL_LOG_DOMAIN_STATIC(example_log_domain);
@@ -95,10 +98,10 @@ source_browser (gpointer data,
   options = grl_operation_options_new (caps);
   grl_operation_options_set_count (options, BROWSE_CHUNK_SIZE);
   grl_operation_options_set_flags (options, GRL_RESOLVE_IDLE_RELAY);
-  media_elements = grl_source_browse_sync (GRL_SOURCE (source),
-                                           media, keys,
-                                           options,
-                                           &error);
+  media_elements = grl_pls_browse_sync (GRL_SOURCE (source),
+                                        media, keys,
+                                        options,
+                                        &error);
   if (!media_elements) {
     g_debug ("No elements found for source: %s!",
              grl_source_get_name (source));
@@ -115,11 +118,14 @@ out:
 }
 
 static void
-load_plugins (void)
+load_plugins (gchar* playlist)
 {
   GrlRegistry *registry;
   GrlSource *source;
   GError *error = NULL;
+  GList *keys;
+  GrlOperationOptions *options;
+  GrlCaps *caps;
 
   registry = grl_registry_get_default ();
 
@@ -131,7 +137,28 @@ load_plugins (void)
   if (!source)
     g_error ("Unable to load grl-filesystem plugin");
 
-  source_browser (source, NULL);
+  if (!(grl_source_supported_operations (source) & GRL_OP_MEDIA_FROM_URI))
+    g_error ("Unable to get media from URI");
+
+  keys = grl_metadata_key_list_new (GRL_METADATA_KEY_TITLE, GRL_METADATA_KEY_URL, GRL_METADATA_KEY_MIME, NULL);
+  if (!keys)
+    g_error ("Unable to create key list");
+
+  caps = grl_source_get_caps (source, GRL_OP_MEDIA_FROM_URI);
+  if (!caps)
+    g_error ("Unable to get source caps");
+
+  options = grl_operation_options_new (caps);
+  if (!options)
+    g_error ("Unable to create operation options");
+
+  GrlMedia* media = grl_source_get_media_from_uri_sync (source, playlist, keys, options, &error);
+  if (!media)
+    g_error ("Unable to get GrlMedia for playlist %s", playlist);
+
+  g_printf("Got Media for %s\n", playlist);
+
+  source_browser (source, media);
 }
 
 static void
@@ -146,6 +173,8 @@ config_plugins (gchar* chosen_test_path)
   config = grl_config_new ("grl-filesystem", "Filesystem");
   grl_config_set_string (config, "base-path", chosen_test_path);
   grl_registry_add_config (registry, config, NULL);
+
+  g_printf ("config_plugin with %s\n", chosen_test_path);
 }
 
 gint
@@ -153,6 +182,9 @@ main (int     argc,
       gchar  *argv[])
 {
   gchar *chosen_test_path;
+  gchar *file_uri;
+  GError *error = NULL;
+
   grl_init (&argc, &argv);
   GRL_LOG_DOMAIN_INIT (example_log_domain, "example");
 
@@ -162,9 +194,35 @@ main (int     argc,
   }
 
   chosen_test_path = argv[1];
+  GFile *file = g_file_new_for_path (chosen_test_path);
+  if (!file) {
+    g_printf ("Invalid file/directory %s\n", argv[1]);
+    return 1;
+  }
 
-  config_plugins (chosen_test_path);
-  load_plugins ();
+  GFileInfo *info = g_file_query_info (file,
+               G_FILE_ATTRIBUTE_STANDARD_TYPE,
+               0,
+               NULL,
+               &error);
+  if (!info) {
+    g_printf ("Invalid file/directory information\n");
+    return 1;
+  }
+
+  if (g_file_info_get_file_type (info) != G_FILE_TYPE_REGULAR) {
+    return 1;
+  }
+
+  gchar *dirname = g_path_get_dirname(chosen_test_path);
+  config_plugins (dirname);
+  g_free(dirname);
+
+  file_uri = g_filename_to_uri (chosen_test_path, NULL, &error);
+
+  g_object_unref(file);
+  g_object_unref(info);
+  load_plugins (file_uri);
 
   return 0;
 }
