@@ -95,6 +95,89 @@ grl_pls_cancel_cb (struct OperationState *op_state);
 /* -------- Functions ------- */
 
 static void
+grl_pls_private_free (struct _GrlPlsPrivate *priv)
+{
+  if (priv->source) {
+    g_object_unref (priv->source);
+    priv->source = NULL;
+  }
+
+  if (priv->playlist) {
+    g_object_unref (priv->playlist);
+    priv->playlist = NULL;
+  }
+
+  if (priv->keys) {
+    // TODO
+    priv->keys = NULL;
+  }
+
+  if (priv->options) {
+    g_object_unref (priv->options);
+    priv->options = NULL;
+  }
+
+  if (priv->entries) {
+    g_array_free (priv->entries, TRUE);
+    priv->entries = NULL;
+  }
+
+  if (priv->valid_entries) {
+    g_ptr_array_free (priv->valid_entries, TRUE);
+    priv->valid_entries = NULL;
+  }
+
+  if (priv->cancellable) {
+    g_object_unref (priv->cancellable);
+    priv->cancellable = NULL;
+  }
+}
+
+static void
+grl_pls_entry_free (struct _GrlPlsEntry *entry)
+{
+  if (entry->uri) {
+    g_free (entry->uri);
+    entry->uri = NULL;
+  }
+
+  if (entry->title) {
+    g_free (entry->title);
+    entry->title = NULL;
+  }
+
+  if (entry->genre) {
+    g_free (entry->genre);
+    entry->genre = NULL;
+  }
+
+  if (entry->author) {
+    g_free (entry->author);
+    entry->author = NULL;
+  }
+
+  if (entry->album) {
+    g_free (entry->album);
+    entry->album = NULL;
+  }
+
+  if (entry->thumbnail) {
+    g_free (entry->thumbnail);
+    entry->thumbnail = NULL;
+  }
+
+  if (entry->mime) {
+    g_free (entry->mime);
+    entry->mime = NULL;
+  }
+
+  if (entry->media) {
+    g_object_unref (entry->media);
+    entry->media = NULL;
+  }
+}
+
+static void
 grl_pls_init (void)
 {
   static gboolean initialized = FALSE;
@@ -284,18 +367,9 @@ grl_pls_cancel_cb (struct OperationState *op_state)
     return;
   }
 
-  /* Mark the operation as finished, if the source does not implement
-     cancellation or it did not make it in time, we will not emit the results
-     for this operation in any case.  At any rate, we will not free the
-     operation data until we are sure the plugin won't need it any more. In the
-     case of operations dealing with multiple results, like browse() or
-     search(), this will happen when it emits remaining = 0 (which can be
-     because it did not cancel the op or because it managed to cancel it and is
-     signaling so) */
   operation_set_cancelled (op_state->operation_id);
 
-  /* If the source provides an implementation for operation cancellation,
-     let's use that to avoid further unnecessary processing in the plugin */
+  /* Cancel the totem playlist parsing operation */
   if (!g_cancellable_is_cancelled (op_state->priv->cancellable)) {
     g_cancellable_cancel (op_state->priv->cancellable);
   }
@@ -307,8 +381,6 @@ grl_pls_mime_is_playlist (const gchar *mime)
   g_return_val_if_fail (mime, FALSE);
 
   return g_str_has_prefix (mime, "audio/x-ms-asx") ||
-         //g_str_has_prefix (mime, "audio/x-ms-wax") ||
-         //g_str_has_prefix (mime, "video/x-ms-wvx") ||
          g_str_has_prefix (mime, "audio/mpegurl") ||
          g_str_has_prefix (mime, "audio/x-mpegurl") ||
          g_str_has_prefix (mime, "audio/x-scpls");
@@ -599,7 +671,8 @@ grl_pls_playlist_parse_cb (GObject *object,
   }
 
   if (GRL_IS_MEDIA_BOX(priv->playlist)) {
-    grl_media_box_set_childcount(priv->playlist, priv->valid_entries->len);
+    GrlMediaBox *box = GRL_IS_MEDIA_BOX(priv->playlist);
+    grl_media_box_set_childcount(box, priv->valid_entries->len);
   }
 
   skip = grl_operation_options_get_skip (priv->options);
@@ -621,7 +694,8 @@ grl_pls_playlist_parse_cb (GObject *object,
                remaining,
                priv->userdata,
                NULL);
-      GRL_DEBUG ("callback called source=%p id=%d content=%p remaining=%p userdata=%p", priv->source, priv->operation_id, content, remaining, priv->userdata);
+      GRL_DEBUG ("callback called source=%p id=%d content=%p remaining=%d userdata=%p",
+          priv->source, priv->operation_id, content, remaining, priv->userdata);
     }
   } else {
     priv->callback (priv->source,
@@ -714,7 +788,7 @@ grl_pls_browse (GrlSource *source,
     return 0;
   }
 
-  priv = g_new(struct _GrlPlsPrivate, 1);
+  priv = g_new0(struct _GrlPlsPrivate, 1);
   if (!priv) {
     return 0;
   }
@@ -736,12 +810,13 @@ grl_pls_browse (GrlSource *source,
   priv->source = g_object_ref (source);
   priv->playlist = g_object_ref (playlist);
   // TODO: what to do with keys
-  priv->keys = 0;
+  priv->keys = NULL;
   priv->options = grl_operation_options_copy (options);
   priv->callback = callback;
   priv->userdata = userdata;
   priv->operation_id = grl_operation_generate_id ();
   priv->entries = g_array_new (FALSE, FALSE, sizeof(struct _GrlPlsEntry));
+  priv->valid_entries = NULL;
   priv->cancellable = g_cancellable_new ();
 
   operation_set_ongoing (source, priv->operation_id, priv);
@@ -851,4 +926,3 @@ grl_pls_browse_sync (GrlSource *source,
 
   return result;
 }
-
