@@ -35,6 +35,10 @@
 #include <totem-pl-parser.h>
 #include <totem-pl-parser-mini.h>
 
+/* --------- Constants -------- */
+
+#define GRL_DATA_PRIV_IS_PLS            "priv:is_pls"
+
 /* --------- Logging  -------- */
 
 #define GRL_LOG_DOMAIN_DEFAULT libpls_log_domain
@@ -442,10 +446,19 @@ grl_pls_media_is_playlist (GrlMedia *media)
   const gchar *playlist_url;
   gchar *filename;
   gchar *scheme;
+  gpointer ptr;
+  gboolean is_pls;
+  gint is_pls_encoded;
 
   GRL_DEBUG ("%s (\"%p\")", __FUNCTION__, media);
 
   g_return_val_if_fail (media, FALSE);
+
+  ptr = g_object_get_data (media, GRL_DATA_PRIV_IS_PLS);
+  if (!ptr) {
+    is_pls_encoded = GPOINTER_TO_INT(ptr);
+    return (is_pls_encoded > 0);
+  }
 
   playlist_url = grl_media_get_url (media);
   if (!playlist_url) {
@@ -464,7 +477,13 @@ grl_pls_media_is_playlist (GrlMedia *media)
     return FALSE;
   }
 
-  return grl_pls_file_is_playlist (filename);
+  is_pls = grl_pls_file_is_playlist (filename);
+
+  is_pls_encoded = is_pls ? 1 : -1;
+  ptr = GINT_TO_POINTER (is_pls_encoded);
+  g_object_set_data (media, "priv:", ptr);
+
+  return is_pls;
 }
 
 static void
