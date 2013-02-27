@@ -108,7 +108,7 @@ grl_pls_private_free (struct _GrlPlsPrivate *priv)
   }
 
   if (priv->keys) {
-    // TODO
+    /* TODO */
     priv->keys = NULL;
   }
 
@@ -410,7 +410,7 @@ grl_pls_media_is_playlist (GrlMedia *media)
 
   scheme = g_uri_parse_scheme (playlist_url);
   if (!scheme) {
-    // we assume it is pathname
+    /* we assume it is pathname */
     filename = g_strdup (scheme);
   } else if (!g_strcmp0 (scheme, "file")) {
     filename = g_filename_from_uri (playlist_url, NULL, NULL);
@@ -497,7 +497,7 @@ grl_media_new_from_uri (gchar * uri)
 
   str = g_uri_parse_scheme (uri);
   if (!str) {
-    // we assume it is pathname
+    /* we assume it is pathname */
     filename = g_strdup (uri);
   } else if (!g_strcmp0 (str, "file")) {
     filename = g_filename_from_uri (uri, NULL, NULL);
@@ -655,7 +655,7 @@ grl_pls_playlist_parse_cb (GObject *object,
 
   operation_set_completed (priv->operation_id);
 
-  // process all entries to see which ones are valid
+  /* process all entries to see which ones are valid */
   priv->valid_entries = g_ptr_array_sized_new(priv->entries->len);
   for (i = 0;i < priv->entries->len;i++) {
     struct _GrlPlsEntry *entry;
@@ -793,10 +793,11 @@ grl_pls_browse (GrlSource *source,
     return 0;
   }
 
-  // disable-unsafe: if FALSE the parser will not parse unsafe locations,
-  // such as local devices and local files if the playlist isn't local.
-  // This is useful if the library is parsing a playlist from a remote
-  // location such as a website.
+  /*
+   * disable-unsafe: if FALSE the parser will not parse unsafe locations,
+   * such as local devices and local files if the playlist isn't local.
+   * This is useful if the library is parsing a playlist from a remote
+   * location such as a website. */
   g_object_set (parser,
                 "recurse", FALSE,
                 "disable-unsafe", TRUE,
@@ -809,7 +810,7 @@ grl_pls_browse (GrlSource *source,
 
   priv->source = g_object_ref (source);
   priv->playlist = g_object_ref (playlist);
-  // TODO: what to do with keys
+  /* TODO: what to do with keys */
   priv->keys = NULL;
   priv->options = grl_operation_options_copy (options);
   priv->callback = callback;
