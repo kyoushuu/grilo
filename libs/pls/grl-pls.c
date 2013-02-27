@@ -378,6 +378,17 @@ grl_pls_cancel_cb (struct OperationState *op_state)
   }
 }
 
+/**
+ * grl_pls_mime_is_playlist:
+ * @mime: mime type of the playlist
+ *
+ * Check if mime type corresponds to a playlist or not.
+ * This is quick to determine, but it does not offer full guarantees.
+ *
+ * Returns: TRUE if mime type is a playlist recognized mime type
+ *
+ * Since: 0.2.6
+ */
 gboolean
 grl_pls_mime_is_playlist (const gchar *mime)
 {
@@ -391,6 +402,18 @@ grl_pls_mime_is_playlist (const gchar *mime)
          g_str_has_prefix (mime, "audio/x-scpls");
 }
 
+/**
+ * grl_pls_file_is_playlist:
+ * @filename: path to file
+ *
+ * Check if a file identified by filename is a playlist or not.
+ * This actually reads part of the file contents, so it might
+ * have some impact in performance than grl_pls_mime_is_playlist.
+ *
+ * Returns: TRUE if a file is recognized as a playlist.
+ *
+ * Since: 0.2.6
+ */
 gboolean
 grl_pls_file_is_playlist (const gchar *filename)
 {
@@ -401,6 +424,18 @@ grl_pls_file_is_playlist (const gchar *filename)
   return totem_pl_parser_can_parse_from_filename (filename, FALSE);
 }
 
+/**
+ * grl_pls_media_is_playlist:
+ * @media: GrlMedia
+ *
+ * Check if a file identified by GrlMedia object is a playlist or not.
+ * This actually reads part of the file contents, so it might
+ * have some impact in performance than grl_pls_mime_is_playlist.
+ *
+ * Returns: TRUE if a GrlMedia is recognized as a playlist.
+ *
+ * Since: 0.2.6
+ */
 gboolean
 grl_pls_media_is_playlist (GrlMedia *media)
 {
