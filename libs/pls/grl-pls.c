@@ -53,7 +53,6 @@ GRL_LOG_DOMAIN_STATIC(libpls_log_domain);
 /* -------- Data structures ------- */
 
 struct _GrlPlsEntry {
-  gboolean is_valid;
   gchar *uri;
   gchar *title;
   gchar *genre;
@@ -459,7 +458,6 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
     return;
   }
 
-  entry.is_valid = FALSE;
   entry.uri = g_strdup (uri);
   entry.title = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_TITLE));
   entry.genre = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_GENRE));
@@ -663,7 +661,6 @@ grl_pls_playlist_parse_cb (GObject *object,
     if (entry) {
       GrlMedia *media = grl_media_new_from_pls_entry (entry);
       if (media) {
-        entry->is_valid = TRUE;
         entry->media = media;
         g_ptr_array_add(priv->valid_entries, media);
       }
