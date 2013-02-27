@@ -126,6 +126,10 @@ load_plugins (gchar* playlist)
   GList *keys;
   GrlOperationOptions *options;
   GrlCaps *caps;
+  GrlMedia* media;
+  gboolean pls_mime, pls_file, pls_media;
+  gchar *mime;
+  gchar *filename;
 
   registry = grl_registry_get_default ();
 
@@ -152,13 +156,24 @@ load_plugins (gchar* playlist)
   if (!options)
     g_error ("Unable to create operation options");
 
-  GrlMedia* media = grl_source_get_media_from_uri_sync (source, playlist, keys, options, &error);
+  media = grl_source_get_media_from_uri_sync (source, playlist, keys, options, &error);
   if (!media)
     g_error ("Unable to get GrlMedia for playlist %s", playlist);
 
-  g_printf("Got Media for %s\n", playlist);
+  mime = grl_media_get_mime (media);
 
-  source_browser (source, media);
+  pls_mime = grl_pls_mime_is_playlist (mime);
+  filename = g_filename_from_uri (playlist, NULL, NULL);
+  pls_file = grl_pls_file_is_playlist (filename);
+  pls_media = grl_pls_media_is_playlist (media);
+
+  g_printf("Got Media for %s - mime=%s\n", playlist, mime);
+  g_printf("\tgrl_pls_mime_is_playlist = %d\n", pls_mime);
+  g_printf("\tgrl_pls_file_is_playlist = %d\n", pls_file);
+  g_printf("\tgrl_pls_media_is_playlist = %d\n", pls_media);
+
+  if (pls_media)
+    source_browser (source, media);
 }
 
 static void
@@ -226,4 +241,3 @@ main (int     argc,
 
   return 0;
 }
-
