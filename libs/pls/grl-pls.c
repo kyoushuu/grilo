@@ -226,6 +226,8 @@ mime_is_media (const gchar *mime, GrlTypeFilter filter)
 static void
 operation_state_free (struct OperationState *op_state)
 {
+  GRL_DEBUG ("%s (%p)", __FUNCTION__, op_state);
+
   g_object_unref (op_state->source);
   g_free (op_state);
 }
@@ -360,6 +362,8 @@ operation_is_ongoing (guint operation_id)
 static void
 grl_pls_cancel_cb (struct OperationState *op_state)
 {
+  GRL_DEBUG ("%s (%p)", __FUNCTION__, op_state);
+
   if (!operation_is_ongoing (op_state->operation_id)) {
     GRL_DEBUG ("Tried to cancel invalid or already cancelled operation. "
                "Skipping...");
@@ -377,6 +381,8 @@ grl_pls_cancel_cb (struct OperationState *op_state)
 gboolean
 grl_pls_mime_is_playlist (const gchar *mime)
 {
+  GRL_DEBUG ("%s (\"%s\")", __FUNCTION__, mime);
+
   g_return_val_if_fail (mime, FALSE);
 
   return g_str_has_prefix (mime, "audio/x-ms-asx") ||
@@ -388,6 +394,8 @@ grl_pls_mime_is_playlist (const gchar *mime)
 gboolean
 grl_pls_file_is_playlist (const gchar *filename)
 {
+  GRL_DEBUG ("%s (\"%s\")", __FUNCTION__, filename);
+
   g_return_val_if_fail (filename, FALSE);
 
   return totem_pl_parser_can_parse_from_filename (filename, FALSE);
@@ -399,6 +407,8 @@ grl_pls_media_is_playlist (GrlMedia *media)
   const gchar *playlist_url;
   gchar *filename;
   gchar *scheme;
+
+  GRL_DEBUG ("%s (\"%p\")", __FUNCTION__, media);
 
   g_return_val_if_fail (media, FALSE);
 
@@ -432,7 +442,8 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
   struct _GrlPlsEntry entry;
   GError *_error;
 
-  GRL_DEBUG ("grl_pls_playlist_entry_parsed_cb, user_data=%p", user_data);
+  GRL_DEBUG ("%s (parser=%p, uri=\"%s\", metadata=%p, user_data=%p)",
+      __FUNCTION__, parser, uri, metadata, user_data);
 
   g_return_if_fail (TOTEM_IS_PL_PARSER (parser));
   g_return_if_fail (uri);
@@ -475,9 +486,7 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
 
 static GrlMedia*
 grl_media_new_from_uri (gchar * uri)
-{  GRL_DEBUG (__FUNCTION__);
-
-  GRL_DEBUG (__FUNCTION__);
+{
   GrlMedia *media = NULL;
   gchar *filename = NULL;
   gchar *str;
@@ -487,11 +496,9 @@ grl_media_new_from_uri (gchar * uri)
   GFile *file = NULL;
   GFileInfo *info = NULL;
 
-  GRL_DEBUG (__FUNCTION__);
+  GRL_DEBUG ("%s (uri=\"%s\")", __FUNCTION__, uri);
 
   g_return_val_if_fail (uri, NULL);
-
-  GRL_DEBUG ("grl_media_new_from_uri: uri=%s", uri);
 
   str = g_uri_parse_scheme (uri);
   if (!str) {
@@ -602,7 +609,7 @@ grl_media_new_from_pls_entry (struct _GrlPlsEntry *entry)
 {
   GrlMedia *media;
 
-  GRL_DEBUG (__FUNCTION__);
+  GRL_DEBUG ("%s (\"%p\")", __FUNCTION__, entry);
 
   g_return_val_if_fail (entry, NULL);
 
@@ -639,7 +646,7 @@ grl_pls_playlist_parse_cb (GObject *object,
   guint remaining;
   guint i;
 
-  GRL_DEBUG (__FUNCTION__);
+  GRL_DEBUG ("%s (object=%p, result=%p, user_data=%p)", __FUNCTION__, object, result, user_data);
 
   g_return_if_fail (object);
   g_return_if_fail (result);
