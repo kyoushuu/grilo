@@ -100,6 +100,8 @@ grl_pls_cancel_cb (struct OperationState *op_state);
 static void
 grl_pls_private_free (struct _GrlPlsPrivate *priv)
 {
+  g_return_if_fail (priv);
+
   if (priv->source) {
     g_object_unref (priv->source);
     priv->source = NULL;
@@ -139,6 +141,8 @@ grl_pls_private_free (struct _GrlPlsPrivate *priv)
 static void
 grl_pls_entry_free (struct _GrlPlsEntry *entry)
 {
+  g_return_if_fail (entry);
+
   if (entry->uri) {
     g_free (entry->uri);
     entry->uri = NULL;
@@ -230,6 +234,8 @@ mime_is_media (const gchar *mime, GrlTypeFilter filter)
 static void
 operation_state_free (struct OperationState *op_state)
 {
+  g_return_if_fail (op_state);
+
   GRL_DEBUG ("%s (%p)", __FUNCTION__, op_state);
 
   g_object_unref (op_state->source);
@@ -334,6 +340,8 @@ operation_set_ongoing (GrlSource *source, guint operation_id, struct _GrlPlsPriv
 {
   struct OperationState *op_state;
 
+  g_return_if_fail (source);
+
   GRL_DEBUG ("%s (%d)", __FUNCTION__, operation_id);
 
   op_state = g_new0 (struct OperationState, 1);
@@ -366,6 +374,8 @@ operation_is_ongoing (guint operation_id)
 static void
 grl_pls_cancel_cb (struct OperationState *op_state)
 {
+  g_return_if_fail (op_state);
+
   GRL_DEBUG ("%s (%p)", __FUNCTION__, op_state);
 
   if (!operation_is_ongoing (op_state->operation_id)) {
@@ -396,6 +406,8 @@ grl_pls_cancel_cb (struct OperationState *op_state)
 gboolean
 grl_pls_mime_is_playlist (const gchar *mime)
 {
+  grl_pls_init();
+
   GRL_DEBUG ("%s (\"%s\")", __FUNCTION__, mime);
 
   g_return_val_if_fail (mime, FALSE);
@@ -421,6 +433,8 @@ grl_pls_mime_is_playlist (const gchar *mime)
 gboolean
 grl_pls_file_is_playlist (const gchar *filename)
 {
+  grl_pls_init();
+
   GRL_DEBUG ("%s (\"%s\")", __FUNCTION__, filename);
 
   g_return_val_if_fail (filename, FALSE);
@@ -449,6 +463,8 @@ grl_pls_media_is_playlist (GrlMedia *media)
   gpointer ptr;
   gboolean is_pls;
   gint is_pls_encoded;
+
+  grl_pls_init();
 
   GRL_DEBUG ("%s (\"%p\")", __FUNCTION__, media);
 
@@ -549,6 +565,9 @@ grl_media_new_from_uri (gchar * uri)
   GError *error = NULL;
   GFile *file = NULL;
   GFileInfo *info = NULL;
+  GTimeVal time;
+  GDateTime *date_time;
+  gboolean thumb_failed;
 
   GRL_DEBUG ("%s (uri=\"%s\")", __FUNCTION__, uri);
 
@@ -617,15 +636,13 @@ grl_media_new_from_uri (gchar * uri)
   g_free (str);
 
   /* Date */
-  GTimeVal time;
-  GDateTime *date_time;
   g_file_info_get_modification_time (info, &time);
   date_time = g_date_time_new_from_timeval_utc (&time);
   grl_media_set_modification_date (media, date_time);
   g_date_time_unref (date_time);
 
   /* Thumbnail */
-  gboolean thumb_failed = g_file_info_get_attribute_boolean (info,
+  thumb_failed = g_file_info_get_attribute_boolean (info,
     G_FILE_ATTRIBUTE_THUMBNAILING_FAILED);
   if (!thumb_failed) {
     const gchar *thumb = g_file_info_get_attribute_byte_string (info,
@@ -705,6 +722,8 @@ grl_pls_playlist_parse_cb (GObject *object,
   g_return_if_fail (object);
   g_return_if_fail (result);
   g_return_if_fail (user_data);
+  g_return_if_fail (priv->operation_id);
+  g_return_if_fail (priv->playlist);
 
   retval = totem_pl_parser_parse_finish (parser, result, &error);
   if (retval != TOTEM_PL_PARSER_RESULT_SUCCESS) {
@@ -772,15 +791,13 @@ check_options (GrlSource *source,
                GrlSupportedOps operation,
                GrlOperationOptions *options)
 {
-  GrlCaps *caps;
-
   if (grl_operation_options_get_count (options) == 0)
     return FALSE;
 
   /* Check only if the source supports the operation */
   if (grl_source_supported_operations (source) & operation) {
+    GrlCaps *caps;
     caps = grl_source_get_caps (source, operation);
-
     return grl_operation_options_obey_caps (options, caps, NULL, NULL);
   } else {
     return TRUE;
@@ -960,7 +977,7 @@ grl_pls_browse_sync (GrlSource *source,
   GRL_DEBUG (__FUNCTION__);
 
   ds = g_slice_new0 (GrlDataSync);
-  if  (!ds) {
+  if (!ds) {
     return NULL;
   }
 
