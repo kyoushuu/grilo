@@ -77,9 +77,8 @@ struct _GrlPlsPrivate {
   GrlSourceResultCb callback;
   gpointer userdata;
   guint operation_id;
-  GArray *entries;
-  GPtrArray *valid_entries;
   GCancellable *cancellable;
+  GArray *entries;
 };
 
 struct OperationState {
@@ -121,16 +120,6 @@ grl_pls_private_free (struct _GrlPlsPrivate *priv)
   if (priv->options) {
     g_object_unref (priv->options);
     priv->options = NULL;
-  }
-
-  if (priv->entries) {
-    g_array_free (priv->entries, TRUE);
-    priv->entries = NULL;
-  }
-
-  if (priv->valid_entries) {
-    g_ptr_array_free (priv->valid_entries, TRUE);
-    priv->valid_entries = NULL;
   }
 
   if (priv->cancellable) {
@@ -590,7 +579,8 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
   GRL_DEBUG ("New playlist entry: URI=%s title=%s genre=%s author=%s album=%s thumbnail=%s mime=%s duration=%lld",
       entry.uri, entry.title, entry.genre, entry.author, entry.album, entry.thumbnail, entry.mime, entry.duration);
 
-  g_array_append_vals(priv->entries, &entry, 1);
+  if (priv->entries)
+    g_array_append_vals(priv->entries, &entry, 1);
 }
 
 static GrlMedia*
@@ -743,66 +733,42 @@ grl_media_new_from_pls_entry (struct _GrlPlsEntry *entry)
 }
 
 static void
-grl_pls_playlist_parse_cb (GObject *object,
-                           GAsyncResult *result,
-                           gpointer user_data)
+grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
 {
-  TotemPlParser *parser = (TotemPlParser *) object;
-  TotemPlParserResult retval;
-  struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
-  GError *error = NULL;
   guint skip;
   guint count;
   guint remaining;
-  guint i;
+  GPtrArray *valid_entries;
 
-  GRL_DEBUG ("%s (object=%p, result=%p, user_data=%p)", __FUNCTION__, object, result, user_data);
-
-  g_return_if_fail (object);
-  g_return_if_fail (result);
-  g_return_if_fail (user_data);
-  g_return_if_fail (priv->operation_id);
+  g_return_if_fail (priv);
   g_return_if_fail (priv->playlist);
+  g_return_if_fail (priv->options);
+  g_return_if_fail (priv->operation_id);
 
-  retval = totem_pl_parser_parse_finish (parser, result, &error);
-  if (retval != TOTEM_PL_PARSER_RESULT_SUCCESS) {
-    GRL_ERROR ("Playlist parsing failed, retval=%d code=%d msg=%s", retval, error->code, error->message);
-    g_error_free (error);
+  valid_entries = g_object_get_data (G_OBJECT (priv->playlist),
+      GRL_DATA_PRIV_PLS_VALID_ENTRIES);
+  if (valid_entries) {
+    skip = grl_operation_options_get_skip (priv->options);
+    if (skip > valid_entries->len)
+      skip = valid_entries->len;
+
+    count = grl_operation_options_get_count (priv->options);
+    if (skip + count > valid_entries->len)
+      count = valid_entries->len - skip;
+
+    remaining = valid_entries->len - skip;
+  } else {
+    skip = 0;
+    count = 0;
+    remaining = 0;
   }
 
-  operation_set_completed (priv->operation_id);
-
-  /* process all entries to see which ones are valid */
-  priv->valid_entries = g_ptr_array_sized_new(priv->entries->len);
-  for (i = 0;i < priv->entries->len;i++) {
-    struct _GrlPlsEntry *entry;
-    entry = &g_array_index (priv->entries, struct _GrlPlsEntry, i);
-    if (entry) {
-      GrlMedia *media = grl_media_new_from_pls_entry (entry);
-      if (media) {
-        entry->media = media;
-        g_ptr_array_add(priv->valid_entries, media);
-      }
-    }
-  }
-
-  if (GRL_IS_MEDIA_BOX(priv->playlist)) {
-    GrlMediaBox *box = GRL_IS_MEDIA_BOX(priv->playlist);
-    grl_media_box_set_childcount(box, priv->valid_entries->len);
-  }
-
-  skip = grl_operation_options_get_skip (priv->options);
-  if (skip > priv->valid_entries->len)
-    skip = priv->valid_entries->len;
-
-  count = grl_operation_options_get_count (priv->options);
-  if (skip + count > priv->valid_entries->len)
-    count = priv->valid_entries->len - skip;
-
-  remaining = priv->valid_entries->len - skip;
   if (remaining) {
+    int i;
+
     for (i = 0;i < count;i++) {
-      GrlMedia *content = g_ptr_array_index(priv->valid_entries, skip + i);
+      GrlMedia *content = g_ptr_array_index(valid_entries, skip + i);
+      g_object_ref (content);
       remaining--;
       priv->callback (priv->source,
                priv->operation_id,
@@ -823,6 +789,64 @@ grl_pls_playlist_parse_cb (GObject *object,
   }
 
   operation_set_finished (priv->operation_id);
+
+  grl_pls_private_free (priv);
+}
+
+static void
+grl_pls_playlist_parse_cb (GObject *object,
+                           GAsyncResult *result,
+                           gpointer user_data)
+{
+  TotemPlParser *parser = (TotemPlParser *) object;
+  TotemPlParserResult retval;
+  struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
+  GError *error = NULL;
+  guint i;
+  GArray *entries;
+  GPtrArray *valid_entries;
+
+  GRL_DEBUG ("%s (object=%p, result=%p, user_data=%p)", __FUNCTION__, object, result, user_data);
+
+  g_return_if_fail (object);
+  g_return_if_fail (result);
+  g_return_if_fail (user_data);
+  g_return_if_fail (priv->operation_id);
+  g_return_if_fail (priv->playlist);
+
+  retval = totem_pl_parser_parse_finish (parser, result, &error);
+  if (retval != TOTEM_PL_PARSER_RESULT_SUCCESS) {
+    GRL_ERROR ("Playlist parsing failed, retval=%d code=%d msg=%s", retval, error->code, error->message);
+    g_error_free (error);
+  }
+
+  operation_set_completed (priv->operation_id);
+
+  valid_entries = g_object_get_data (G_OBJECT (priv->playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
+
+  /* process all entries to see which ones are valid */
+  for (i = 0;i < priv->entries->len;i++) {
+    struct _GrlPlsEntry *entry;
+    entry = &g_array_index (priv->entries, struct _GrlPlsEntry, i);
+    if (entry) {
+      GrlMedia *media = grl_media_new_from_pls_entry (entry);
+      if (media) {
+        entry->media = media;
+        g_ptr_array_add(valid_entries, media);
+        g_object_ref(media);
+      }
+    }
+  }
+
+  /* at this point we can free entries, not used anymore */
+  grl_pls_entries_array_free (priv->entries);
+
+  if (GRL_IS_MEDIA_BOX(priv->playlist)) {
+    GrlMediaBox *box = GRL_MEDIA_BOX(priv->playlist);
+    grl_media_box_set_childcount(box, valid_entries->len);
+  }
+
+  grl_pls_browse_report_results (priv);
 }
 
 static gboolean
@@ -872,6 +896,7 @@ grl_pls_browse (GrlSource *source,
   TotemPlParser *parser;
   const char *playlist_url;
   struct _GrlPlsPrivate *priv;
+  GPtrArray *valid_entries;
 
   grl_pls_init();
 
@@ -885,7 +910,6 @@ grl_pls_browse (GrlSource *source,
                         GRL_OP_BROWSE, 0);
   g_return_val_if_fail (check_options (source, GRL_OP_BROWSE, options), 0);
 
-
   playlist_url = grl_media_get_url (playlist);
   if (!playlist_url) {
     GRL_WARNING ("Unable to get URL from Media");
@@ -897,15 +921,46 @@ grl_pls_browse (GrlSource *source,
     return 0;
   }
 
+  priv = g_new0(struct _GrlPlsPrivate, 1);
+  if (!priv) {
+    return 0;
+  }
+
+  priv->source = g_object_ref (source);
+  priv->playlist = g_object_ref (playlist);
+  /* TODO: what to do with keys */
+  priv->keys = NULL;
+  priv->options = grl_operation_options_copy (options);
+  priv->callback = callback;
+  priv->userdata = userdata;
+  priv->operation_id = grl_operation_generate_id ();
+  priv->cancellable = g_cancellable_new ();
+
+  operation_set_ongoing (source, priv->operation_id, priv);
+
+  /* check if we have the entries cached or not */
+  valid_entries = g_object_get_data (G_OBJECT (playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
+  if (valid_entries) {
+    g_idle_add ((GSourceFunc) grl_pls_browse_report_results, priv);
+    return priv->operation_id;
+  }
+
+  priv->entries = g_array_new (FALSE, FALSE, sizeof(struct _GrlPlsEntry));
+  if (!priv->entries) {
+    return 0;
+  }
+
+  valid_entries = g_ptr_array_sized_new(16);
+  if (!valid_entries) {
+    return 0;
+  }
+
   parser = totem_pl_parser_new ();
   if (!parser) {
     return 0;
   }
 
-  priv = g_new0(struct _GrlPlsPrivate, 1);
-  if (!priv) {
-    return 0;
-  }
+  g_object_set_data_full (G_OBJECT (playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES, valid_entries, (GDestroyNotify) grl_pls_valid_entries_ptrarray_free);
 
   /*
    * disable-unsafe: if FALSE the parser will not parse unsafe locations,
@@ -921,20 +976,6 @@ grl_pls_browse (GrlSource *source,
                     G_CALLBACK (grl_pls_playlist_entry_parsed_cb),
                     priv);
   GRL_DEBUG ("g_signal_connect, priv=%p", priv);
-
-  priv->source = g_object_ref (source);
-  priv->playlist = g_object_ref (playlist);
-  /* TODO: what to do with keys */
-  priv->keys = NULL;
-  priv->options = grl_operation_options_copy (options);
-  priv->callback = callback;
-  priv->userdata = userdata;
-  priv->operation_id = grl_operation_generate_id ();
-  priv->entries = g_array_new (FALSE, FALSE, sizeof(struct _GrlPlsEntry));
-  priv->valid_entries = NULL;
-  priv->cancellable = g_cancellable_new ();
-
-  operation_set_ongoing (source, priv->operation_id, priv);
 
   totem_pl_parser_parse_async (parser,
                                playlist_url,
