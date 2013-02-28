@@ -32,14 +32,14 @@ gboolean grl_pls_file_is_playlist (const gchar *filename);
 gboolean grl_pls_media_is_playlist (GrlMedia *media);
 
 guint grl_pls_browse (GrlSource *source,
-                      GrlMedia *container,
+                      GrlMedia *playlist,
                       const GList *keys,
                       GrlOperationOptions *options,
                       GrlSourceResultCb callback,
                       gpointer user_data);
 
 GList *grl_pls_browse_sync (GrlSource *source,
-                            GrlMedia *container,
+                            GrlMedia *playlist,
                             const GList *keys,
                             GrlOperationOptions *options,
                             GError **error);

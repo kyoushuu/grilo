@@ -20,6 +20,23 @@
  *
  */
 
+/**
+ * SECTION:grl-pls
+ * @short_description: playlist handling functions
+ *
+ * Existing grilo library and its plugins do not support getting information
+ * from playlists. This library allow to identify playlists, and browse
+ * into them exposing playlist entries as GrlMedia objects.
+ *
+ * The usage of this library is entirely optional, as it is not used yet in
+ * any grilo plugin. It is meant to be used either from grilo plugins or
+ * from applications using grilo.
+ *
+ * The main use case is to add browsable capabilities to playlist files
+ * in the local filesystem. However, it was agreed to provide it as a library
+ * so it could be reused and/or adapted for future use cases.
+ */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -872,16 +889,25 @@ check_options (GrlSource *source,
 /**
  * grl_pls_browse:
  * @source: a source
- * @container: a playlist
+ * @playlist: a playlist
  * @keys: (element-type GrlKeyID): the #GList of
  * #GrlKeyID<!-- -->s to request
  * @options: options wanted for that operation
  * @callback: (scope notified): the user defined callback
  * @user_data: the user data to pass in the callback
  *
- * Browse from media elements through an available list.
+ * Browse into a playlist. The playlist entries are
+ * returned via the @callback function as GrlMedia objects.
+ * This function imitates the API and way of working of
+ * #grl_source_browse.
  *
- * This method is asynchronous.
+ * The @playlist provided could be of any GrlMedia class,
+ * as long as its URI points to a valid playlist file.
+ *
+ * This function is asynchronous.
+ *
+ * See #grl_source_browse() function for additional information
+ * and sample code.
  *
  * Returns: the operation identifier
  *
@@ -1028,15 +1054,21 @@ multiple_result_async_cb (GrlSource *source,
 /**
  * grl_pls_browse_sync:
  * @source: a source
- * @container: a playlist
+ * @playlist: a playlist
  * @keys: (element-type GrlKeyID): the #GList of
  * #GrlKeyID<!-- -->s to request
  * @options: options wanted for that operation
  * @error: a #GError, or @NULL
  *
- * Browse playlist entries through an available playlist.
+ * Browse into a playlist. The playlist entries are
+ * returned via the @callback function as GrlMedia objects.
+ * This function imitates the API and way of working of
+ * #grl_source_browse_sync.
  *
- * This method is synchronous.
+ * This function is synchronous.
+ *
+ * See #grl_source_browse_sync() function for additional information
+ * and sample code.
  *
  * Returns: (element-type Grl.Media) (transfer full): a #GList with #GrlMedia
  * elements. After use g_object_unref() every element and g_list_free() the
@@ -1046,7 +1078,7 @@ multiple_result_async_cb (GrlSource *source,
  */
 GList *
 grl_pls_browse_sync (GrlSource *source,
-                     GrlMedia *container,
+                     GrlMedia *playlist,
                      const GList *keys,
                      GrlOperationOptions *options,
                      GError **error)
@@ -1064,7 +1096,7 @@ grl_pls_browse_sync (GrlSource *source,
   }
 
   if (grl_pls_browse (source,
-                      container,
+                      playlist,
                       keys,
                       options,
                       multiple_result_async_cb,
