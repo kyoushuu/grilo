@@ -126,6 +126,8 @@ grl_pls_private_free (struct _GrlPlsPrivate *priv)
     g_object_unref (priv->cancellable);
     priv->cancellable = NULL;
   }
+
+  g_free (priv);
 }
 
 static void
