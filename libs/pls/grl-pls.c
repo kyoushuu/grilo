@@ -186,6 +186,37 @@ grl_pls_entry_free (struct _GrlPlsEntry *entry)
 }
 
 static void
+grl_pls_entries_array_free (GArray *entries)
+{
+  g_return_if_fail (entries);
+
+  if (entries) {
+    int i;
+    for (i = 0;i < entries->len;i++) {
+      struct _GrlPlsEntry *entry;
+      entry = &g_array_index (entries, struct _GrlPlsEntry, i);
+      grl_pls_entry_free (entry);
+    }
+    g_array_free (entries, TRUE);
+  }
+}
+
+static void
+grl_pls_valid_entries_ptrarray_free (GPtrArray *valid_entries)
+{
+  g_return_if_fail (valid_entries);
+
+  if (valid_entries) {
+    int i;
+    for (i = 0;i < valid_entries->len;i++) {
+      GrlMedia *content = g_ptr_array_index (valid_entries, i);
+      g_object_unref (content);
+    }
+    g_ptr_array_free (valid_entries, TRUE);
+  }
+}
+
+static void
 grl_pls_init (void)
 {
   static gboolean initialized = FALSE;
