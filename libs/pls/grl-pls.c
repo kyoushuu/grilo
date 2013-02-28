@@ -37,7 +37,8 @@
 
 /* --------- Constants -------- */
 
-#define GRL_DATA_PRIV_IS_PLS            "priv:is_pls"
+#define GRL_DATA_PRIV_PLS_IS_PLAYLIST   "priv:pls:is_playlist"
+#define GRL_DATA_PRIV_PLS_VALID_ENTRIES "priv:pls:valid_entries"
 
 /* --------- Logging  -------- */
 
@@ -470,10 +471,12 @@ grl_pls_media_is_playlist (GrlMedia *media)
 
   g_return_val_if_fail (media, FALSE);
 
-  ptr = g_object_get_data (media, GRL_DATA_PRIV_IS_PLS);
-  if (!ptr) {
+  ptr = g_object_get_data (G_OBJECT (media), GRL_DATA_PRIV_PLS_IS_PLAYLIST);
+  if (ptr) {
     is_pls_encoded = GPOINTER_TO_INT(ptr);
-    return (is_pls_encoded > 0);
+    is_pls = is_pls_encoded > 0;
+    GRL_DEBUG ("%s : using cached value = %d", __FUNCTION__, is_pls);
+    return is_pls;
   }
 
   playlist_url = grl_media_get_url (media);
@@ -495,9 +498,14 @@ grl_pls_media_is_playlist (GrlMedia *media)
 
   is_pls = grl_pls_file_is_playlist (filename);
 
+  /* is_pls must be encoded to differentiate between the cases:
+   * - non-cached (null)
+   * - not a playlist (negative)
+   * - playlist (positive) */
   is_pls_encoded = is_pls ? 1 : -1;
   ptr = GINT_TO_POINTER (is_pls_encoded);
-  g_object_set_data (media, "priv:", ptr);
+  g_object_set_data (G_OBJECT (media), GRL_DATA_PRIV_PLS_IS_PLAYLIST, ptr);
+  GRL_DEBUG ("%s : caching value = %d", __FUNCTION__, is_pls);
 
   return is_pls;
 }
