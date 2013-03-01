@@ -546,6 +546,8 @@ grl_pls_media_is_playlist (GrlMedia *media)
   g_object_set_data (G_OBJECT (media), GRL_DATA_PRIV_PLS_IS_PLAYLIST, ptr);
   GRL_DEBUG ("%s : caching value = %d", __FUNCTION__, is_pls);
 
+  g_free (filename);
+
   return is_pls;
 }
 
