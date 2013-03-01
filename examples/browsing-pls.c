@@ -115,6 +115,7 @@ source_browser (gpointer data,
 
 out:
   g_list_free (keys);
+  g_object_unref (options);
 }
 
 static void
@@ -128,7 +129,7 @@ load_plugins (gchar* playlist)
   GrlCaps *caps;
   GrlMedia* media;
   gboolean pls_mime, pls_file, pls_media;
-  gchar *mime;
+  const gchar *mime;
   gchar *filename;
 
   registry = grl_registry_get_default ();
@@ -160,11 +161,17 @@ load_plugins (gchar* playlist)
   if (!media)
     g_error ("Unable to get GrlMedia for playlist %s", playlist);
 
+  g_object_unref (caps);
+  g_object_unref (options);
+
   mime = grl_media_get_mime (media);
 
   pls_mime = grl_pls_mime_is_playlist (mime);
+
   filename = g_filename_from_uri (playlist, NULL, NULL);
   pls_file = grl_pls_file_is_playlist (filename);
+  g_free (filename);
+
   pls_media = grl_pls_media_is_playlist (media);
 
   g_printf("Got Media for %s - mime=%s\n", playlist, mime);
@@ -172,8 +179,12 @@ load_plugins (gchar* playlist)
   g_printf("\tgrl_pls_file_is_playlist = %d\n", pls_file);
   g_printf("\tgrl_pls_media_is_playlist = %d\n", pls_media);
 
-  if (pls_media)
+  if (pls_media) {
     source_browser (source, media);
+  }
+
+  g_object_unref (media);
+  g_object_unref (source);
 }
 
 static void
@@ -231,13 +242,14 @@ main (int     argc,
 
   gchar *dirname = g_path_get_dirname(chosen_test_path);
   config_plugins (dirname);
-  g_free(dirname);
+  g_free (dirname);
 
   file_uri = g_filename_to_uri (chosen_test_path, NULL, &error);
 
-  g_object_unref(file);
-  g_object_unref(info);
+  g_object_unref (file);
+  g_object_unref (info);
   load_plugins (file_uri);
+  g_free (file_uri);
 
   return 0;
 }
