@@ -763,6 +763,8 @@ grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
   g_return_if_fail (priv->playlist);
   g_return_if_fail (priv->options);
   g_return_if_fail (priv->operation_id);
+  GRL_DEBUG ("%s (priv=%p)", __FUNCTION__, priv);
+
 
   valid_entries = g_object_get_data (G_OBJECT (priv->playlist),
       GRL_DATA_PRIV_PLS_VALID_ENTRIES);
@@ -822,7 +824,6 @@ grl_pls_playlist_parse_cb (GObject *object,
   struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
   GError *error = NULL;
   guint i;
-  GArray *entries;
   GPtrArray *valid_entries;
 
   GRL_DEBUG ("%s (object=%p, result=%p, user_data=%p)", __FUNCTION__, object, result, user_data);
@@ -969,6 +970,8 @@ grl_pls_browse (GrlSource *source,
   /* check if we have the entries cached or not */
   valid_entries = g_object_get_data (G_OBJECT (playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
   if (valid_entries) {
+    priv->entries = NULL;
+    GRL_DEBUG ("%s : using cached data priv=%p", __FUNCTION__, priv);
     g_idle_add ((GSourceFunc) grl_pls_browse_report_results, priv);
     return priv->operation_id;
   }
