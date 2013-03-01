@@ -753,7 +753,7 @@ grl_media_new_from_pls_entry (struct _GrlPlsEntry *entry)
   return media;
 }
 
-static void
+static gboolean
 grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
 {
   guint skip;
@@ -761,12 +761,12 @@ grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
   guint remaining;
   GPtrArray *valid_entries;
 
-  g_return_if_fail (priv);
-  g_return_if_fail (priv->playlist);
-  g_return_if_fail (priv->options);
-  g_return_if_fail (priv->operation_id);
   GRL_DEBUG ("%s (priv=%p)", __FUNCTION__, priv);
 
+  g_return_val_if_fail (priv, FALSE);
+  g_return_val_if_fail (priv->playlist, FALSE);
+  g_return_val_if_fail (priv->options, FALSE);
+  g_return_val_if_fail (priv->operation_id, FALSE);
 
   valid_entries = g_object_get_data (G_OBJECT (priv->playlist),
       GRL_DATA_PRIV_PLS_VALID_ENTRIES);
@@ -814,6 +814,8 @@ grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
   operation_set_finished (priv->operation_id);
 
   grl_pls_private_free (priv);
+
+  return FALSE;
 }
 
 static void
