@@ -1045,14 +1045,14 @@ grl_pls_browse_by_spec (GrlSource *source,
   g_signal_connect (G_OBJECT (parser),
                     "entry-parsed",
                     G_CALLBACK (grl_pls_playlist_entry_parsed_cb),
-                    priv);
+                    bs);
 
   totem_pl_parser_parse_async (parser,
                                playlist_url,
                                FALSE,
                                priv->cancellable,
                                grl_pls_playlist_parse_cb,
-                               priv);
+                               bs);
 
   g_object_unref (parser);
 }
