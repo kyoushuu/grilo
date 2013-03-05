@@ -46,7 +46,7 @@ AC_DEFINE_UNQUOTED(GRLNET_VERSION, "$GRLNET_VERSION", [Grilo Net library version
 
 # Grilo Pls library
 
-GRLPLS_VERSION=0.1.0
+GRLPLS_VERSION=0.2.0
 AC_SUBST(GRLPLS_VERSION)
 AC_DEFINE_UNQUOTED(GRLPLS_VERSION, "$GRLPLS_VERSION", [Grilo Pls library version])
 
@@ -332,7 +332,7 @@ if test "x$HAVE_LIBSOUP" = "xyes"; then
 fi
 
 if test "x$HAVE_TOTEM_PL_PARSER" = "xyes"; then
-   AC_CONFIG_FILES([grilo-pls-uninstalled.pc grilo-pls-0.1.pc])
+   AC_CONFIG_FILES([grilo-pls-uninstalled.pc grilo-pls-0.2.pc])
 fi
 
 AC_CONFIG_FILES([
