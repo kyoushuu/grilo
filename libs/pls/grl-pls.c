@@ -800,6 +800,7 @@ grl_pls_browse_report_results (GrlSourceBrowseSpec *bs)
   guint remaining;
   GPtrArray *valid_entries;
   struct _GrlPlsPrivate *priv;
+  gboolean called_from_plugin;
 
   GRL_DEBUG ("%s (bs=%p)", __FUNCTION__, bs);
 
@@ -854,9 +855,14 @@ grl_pls_browse_report_results (GrlSourceBrowseSpec *bs)
              NULL);
   }
 
-  operation_set_finished (bs->operation_id);
+  called_from_plugin = g_hash_table_lookup (operations,
+      GUINT_TO_POINTER (bs->operation_id)) == NULL;
 
-  g_hash_table_remove (operations, GUINT_TO_POINTER (bs->operation_id));
+  if (!called_from_plugin) {
+    operation_set_finished (bs->operation_id);
+    operation_set_completed (bs->operation_id);
+    g_hash_table_remove (operations, GUINT_TO_POINTER (bs->operation_id));
+  }
 
   return FALSE;
 }
@@ -890,8 +896,6 @@ grl_pls_playlist_parse_cb (GObject *object,
     GRL_ERROR ("Playlist parsing failed, retval=%d code=%d msg=%s", retval, error->code, error->message);
     g_error_free (error);
   }
-
-  operation_set_completed (bs->operation_id);
 
   valid_entries = g_object_get_data (G_OBJECT (bs->container), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
 
