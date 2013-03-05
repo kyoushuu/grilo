@@ -691,6 +691,10 @@ grl_media_new_from_uri (gchar * uri)
     media = grl_media_new ();
   }
 
+  if (media) {
+    grl_media_set_id (media, filename);
+  }
+
   if (!GRL_IS_MEDIA_BOX (media)) {
     grl_media_set_mime (media, mime);
   }
