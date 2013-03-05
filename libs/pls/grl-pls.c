@@ -523,7 +523,8 @@ grl_pls_media_is_playlist (GrlMedia *media)
 
   grl_pls_init();
 
-  GRL_DEBUG ("%s (\"%p\")", __FUNCTION__, media);
+  GRL_DEBUG ("%s (\"%p\") id=%s", __FUNCTION__, media,
+      media ? grl_media_get_id(media) : NULL);
 
   g_return_val_if_fail (media, FALSE);
 
@@ -537,6 +538,7 @@ grl_pls_media_is_playlist (GrlMedia *media)
 
   playlist_url = grl_media_get_url (media);
   if (!playlist_url) {
+    GRL_DEBUG ("%s: no URL found", __FUNCTION__);
     return FALSE;
   }
 
