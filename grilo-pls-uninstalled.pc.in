@@ -9,7 +9,7 @@ typelibdir=@abs_top_builddir@/libs
 Name: Grilo playlist library
 Description: Grilo playlist helpers for plug-ins
 Requires: @GRL_NAME@
-Version: @GRLNET_VERSION@
+Version: @GRLPLS_VERSION@
 
-Libs: @abs_top_builddir@/libs/net/libgrlpls-0.1.la
+Libs: @abs_top_builddir@/libs/pls/libgrlpls-0.1.la
 Cflags: -I@abs_top_srcdir@/libs -I@abs_top_builddir@/libs
