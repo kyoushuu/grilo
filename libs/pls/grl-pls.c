@@ -852,7 +852,7 @@ grl_pls_browse_report_results (GrlSourceBrowseSpec *bs)
 
   operation_set_finished (bs->operation_id);
 
-  //grl_source_browse_spec_free (bs);
+  g_hash_table_remove (operations, GUINT_TO_POINTER (bs->operation_id));
 
   return FALSE;
 }
