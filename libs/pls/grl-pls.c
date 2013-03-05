@@ -87,13 +87,7 @@ struct _GrlPlsEntry {
 };
 
 struct _GrlPlsPrivate {
-  GrlSource *source;
-  GrlMedia *playlist;
-  GList *keys;
-  GrlOperationOptions *options;
-  GrlSourceResultCb callback;
-  gpointer userdata;
-  guint operation_id;
+  gpointer user_data;
   GCancellable *cancellable;
   GArray *entries;
 };
@@ -104,13 +98,17 @@ struct OperationState {
   gboolean cancelled;
   gboolean completed;
   gboolean started;
-  struct _GrlPlsPrivate *priv;
+  GrlSourceBrowseSpec *bs;
 };
 
 /* -------- Prototypes ------- */
 
 static void
 grl_pls_cancel_cb (struct OperationState *op_state);
+
+/* -------- Variables ------- */
+
+static GHashTable *operations = NULL;
 
 /* -------- Functions ------- */
 
@@ -119,32 +117,43 @@ grl_pls_private_free (struct _GrlPlsPrivate *priv)
 {
   g_return_if_fail (priv);
 
-  if (priv->source) {
-    g_object_unref (priv->source);
-    priv->source = NULL;
-  }
-
-  if (priv->playlist) {
-    g_object_unref (priv->playlist);
-    priv->playlist = NULL;
-  }
-
-  if (priv->keys) {
-    /* TODO */
-    priv->keys = NULL;
-  }
-
-  if (priv->options) {
-    g_object_unref (priv->options);
-    priv->options = NULL;
-  }
-
   if (priv->cancellable) {
     g_object_unref (priv->cancellable);
     priv->cancellable = NULL;
   }
 
   g_free (priv);
+}
+
+static void
+grl_source_browse_spec_free (GrlSourceBrowseSpec *spec)
+{
+  if (spec->source) {
+    g_object_unref (spec->source);
+    spec->source = NULL;
+  }
+
+  if (spec->container) {
+    g_object_unref (spec->container);
+    spec->container = NULL;
+  }
+
+  if (spec->keys) {
+    /* TODO */
+    spec->keys = NULL;
+  }
+
+  if (spec->options) {
+    g_object_unref (spec->options);
+    spec->options = NULL;
+  }
+
+  if (spec->user_data) {
+    struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) spec->user_data;
+    grl_pls_private_free (priv);
+  }
+
+  g_free (spec);
 }
 
 static void
@@ -231,6 +240,11 @@ grl_pls_init (void)
 
   if (!initialized) {
     GRL_LOG_DOMAIN_INIT (libpls_log_domain, "pls");
+
+    operations = g_hash_table_new_full (g_direct_hash, g_direct_equal,
+                                        NULL,
+                                        (GDestroyNotify) grl_source_browse_spec_free);
+
     initialized = TRUE;
   }
 }
@@ -376,7 +390,7 @@ operation_is_cancelled (guint operation_id)
  * and not cancelled)
  */
 static void
-operation_set_ongoing (GrlSource *source, guint operation_id, struct _GrlPlsPrivate *priv)
+operation_set_ongoing (GrlSource *source, guint operation_id, GrlSourceBrowseSpec *bs)
 {
   struct OperationState *op_state;
 
@@ -387,7 +401,7 @@ operation_set_ongoing (GrlSource *source, guint operation_id, struct _GrlPlsPriv
   op_state = g_new0 (struct OperationState, 1);
   op_state->source = g_object_ref (source);
   op_state->operation_id = operation_id;
-  op_state->priv = priv;
+  op_state->bs = bs;
 
   grl_operation_set_private_data (operation_id,
                                   op_state,
@@ -414,6 +428,8 @@ operation_is_ongoing (guint operation_id)
 static void
 grl_pls_cancel_cb (struct OperationState *op_state)
 {
+  struct _GrlPlsPrivate *priv;
+
   g_return_if_fail (op_state);
 
   GRL_DEBUG ("%s (%p)", __FUNCTION__, op_state);
@@ -427,8 +443,9 @@ grl_pls_cancel_cb (struct OperationState *op_state)
   operation_set_cancelled (op_state->operation_id);
 
   /* Cancel the totem playlist parsing operation */
-  if (!g_cancellable_is_cancelled (op_state->priv->cancellable)) {
-    g_cancellable_cancel (op_state->priv->cancellable);
+  priv = (struct _GrlPlsPrivate *) op_state->bs->user_data;
+  if (priv && !g_cancellable_is_cancelled (priv->cancellable)) {
+    g_cancellable_cancel (priv->cancellable);
   }
 }
 
@@ -557,7 +574,8 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
                                   GHashTable *metadata,
                                   gpointer user_data)
 {
-  struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
+  GrlSourceBrowseSpec *bs = (GrlSourceBrowseSpec *) user_data;
+  struct _GrlPlsPrivate *priv;
   struct _GrlPlsEntry entry;
   GError *_error;
 
@@ -568,22 +586,26 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
   g_return_if_fail (uri);
   g_return_if_fail (metadata);
   g_return_if_fail (user_data);
+  g_return_if_fail (bs->user_data);
+
+  priv = (struct _GrlPlsPrivate *) bs->user_data;
 
   /* Ignore elements after operation has completed */
-  if (operation_is_completed (priv->operation_id)) {
+  if (operation_is_completed (bs->operation_id)) {
     GRL_WARNING ("Entry parsed after playlist completed for operation %d",
-                 priv->operation_id);
+                 bs->operation_id);
     return;
   }
 
   /* Check if cancelled */
-  if (operation_is_cancelled (priv->operation_id)) {
+  if (operation_is_cancelled (bs->operation_id)) {
     GRL_DEBUG ("Operation was cancelled, skipping result until getting the last one");
     /* Wait for the last element */
     _error = g_error_new (GRL_CORE_ERROR,
                           GRL_CORE_ERROR_OPERATION_CANCELLED,
                           "Operation was cancelled");
-    priv->callback (priv->source, priv->operation_id, NULL, 0, priv->userdata, _error);
+    struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) bs->user_data;
+    bs->callback (bs->source, bs->operation_id, NULL, 0, priv->user_data, _error);
     g_error_free (_error);
     return;
   }
@@ -753,29 +775,46 @@ grl_media_new_from_pls_entry (struct _GrlPlsEntry *entry)
   return media;
 }
 
+static gint
+grl_pls_browse_report_error (GrlSourceBrowseSpec *bs, const gchar *message)
+{
+  GError *error = g_error_new (GRL_CORE_ERROR,
+                               GRL_CORE_ERROR_BROWSE_FAILED,
+                               "%s",
+                               message);
+  bs->callback (bs->source, bs->operation_id, NULL, 0, bs->user_data, error);
+  g_error_free (error);
+
+  return FALSE;
+}
+
 static gboolean
-grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
+grl_pls_browse_report_results (GrlSourceBrowseSpec *bs)
 {
   guint skip;
   guint count;
   guint remaining;
   GPtrArray *valid_entries;
+  struct _GrlPlsPrivate *priv;
 
-  GRL_DEBUG ("%s (priv=%p)", __FUNCTION__, priv);
+  GRL_DEBUG ("%s (bs=%p)", __FUNCTION__, bs);
 
-  g_return_val_if_fail (priv, FALSE);
-  g_return_val_if_fail (priv->playlist, FALSE);
-  g_return_val_if_fail (priv->options, FALSE);
-  g_return_val_if_fail (priv->operation_id, FALSE);
+  g_return_val_if_fail (bs, FALSE);
+  g_return_val_if_fail (bs->container, FALSE);
+  g_return_val_if_fail (bs->options, FALSE);
+  g_return_val_if_fail (bs->operation_id, FALSE);
+  g_return_val_if_fail (bs->user_data, FALSE);
 
-  valid_entries = g_object_get_data (G_OBJECT (priv->playlist),
+  priv = (struct _GrlPlsPrivate *) bs->user_data;
+
+  valid_entries = g_object_get_data (G_OBJECT (bs->container),
       GRL_DATA_PRIV_PLS_VALID_ENTRIES);
   if (valid_entries) {
-    skip = grl_operation_options_get_skip (priv->options);
+    skip = grl_operation_options_get_skip (bs->options);
     if (skip > valid_entries->len)
       skip = valid_entries->len;
 
-    count = grl_operation_options_get_count (priv->options);
+    count = grl_operation_options_get_count (bs->options);
     if (skip + count > valid_entries->len)
       count = valid_entries->len - skip;
 
@@ -793,27 +832,27 @@ grl_pls_browse_report_results (struct _GrlPlsPrivate *priv)
       GrlMedia *content = g_ptr_array_index(valid_entries, skip + i);
       g_object_ref (content);
       remaining--;
-      priv->callback (priv->source,
-               priv->operation_id,
+      bs->callback (bs->source,
+               bs->operation_id,
                content,
                remaining,
-               priv->userdata,
+               priv->user_data,
                NULL);
-      GRL_DEBUG ("callback called source=%p id=%d content=%p remaining=%d userdata=%p",
-          priv->source, priv->operation_id, content, remaining, priv->userdata);
+      GRL_DEBUG ("callback called source=%p id=%d content=%p remaining=%d user_data=%p",
+          bs->source, bs->operation_id, content, remaining, priv->user_data);
     }
   } else {
-    priv->callback (priv->source,
-             priv->operation_id,
+    bs->callback (bs->source,
+             bs->operation_id,
              NULL,
              0,
-             priv->userdata,
+             priv->user_data,
              NULL);
   }
 
-  operation_set_finished (priv->operation_id);
+  operation_set_finished (bs->operation_id);
 
-  grl_pls_private_free (priv);
+  //grl_source_browse_spec_free (bs);
 
   return FALSE;
 }
@@ -825,7 +864,8 @@ grl_pls_playlist_parse_cb (GObject *object,
 {
   TotemPlParser *parser = (TotemPlParser *) object;
   TotemPlParserResult retval;
-  struct _GrlPlsPrivate *priv = (struct _GrlPlsPrivate *) user_data;
+  GrlSourceBrowseSpec *bs = (GrlSourceBrowseSpec *) user_data;
+  struct _GrlPlsPrivate *priv;
   GError *error = NULL;
   guint i;
   GPtrArray *valid_entries;
@@ -834,9 +874,12 @@ grl_pls_playlist_parse_cb (GObject *object,
 
   g_return_if_fail (object);
   g_return_if_fail (result);
-  g_return_if_fail (user_data);
-  g_return_if_fail (priv->operation_id);
-  g_return_if_fail (priv->playlist);
+  g_return_if_fail (bs);
+  g_return_if_fail (bs->operation_id);
+  g_return_if_fail (bs->container);
+  g_return_if_fail (bs->user_data);
+
+  priv = (struct _GrlPlsPrivate *) bs->user_data;
 
   retval = totem_pl_parser_parse_finish (parser, result, &error);
   if (retval != TOTEM_PL_PARSER_RESULT_SUCCESS) {
@@ -844,9 +887,9 @@ grl_pls_playlist_parse_cb (GObject *object,
     g_error_free (error);
   }
 
-  operation_set_completed (priv->operation_id);
+  operation_set_completed (bs->operation_id);
 
-  valid_entries = g_object_get_data (G_OBJECT (priv->playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
+  valid_entries = g_object_get_data (G_OBJECT (bs->container), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
 
   /* process all entries to see which ones are valid */
   for (i = 0;i < priv->entries->len;i++) {
@@ -864,13 +907,14 @@ grl_pls_playlist_parse_cb (GObject *object,
 
   /* at this point we can free entries, not used anymore */
   grl_pls_entries_array_free (priv->entries);
+  priv->entries = NULL;
 
-  if (GRL_IS_MEDIA_BOX(priv->playlist)) {
-    GrlMediaBox *box = GRL_MEDIA_BOX(priv->playlist);
-    grl_media_box_set_childcount(box, valid_entries->len);
+  if (GRL_IS_MEDIA_BOX (bs->container)) {
+    GrlMediaBox *box = GRL_MEDIA_BOX (bs->container);
+    grl_media_box_set_childcount (box, valid_entries->len);
   }
 
-  grl_pls_browse_report_results (priv);
+  grl_pls_browse_report_results (bs);
 }
 
 static gboolean
@@ -889,6 +933,124 @@ check_options (GrlSource *source,
   } else {
     return TRUE;
   }
+}
+
+/**
+ * grl_pls_browse_by_spec:
+ * @source: a source
+ * @bs: a GrlSourceBrowseSpec structure with details of the browsing operation
+ *
+ * Browse into a playlist. The playlist entries are
+ * returned via the bs->callback function as GrlMedia objects.
+ * This function is more suitable to be called from plugins, which by
+ * design get the GrlSourceBrowseSpec already filled in.
+ *
+ * The bs->playlist provided could be of any GrlMedia class,
+ * as long as its URI points to a valid playlist file.
+ *
+ * This function is asynchronous.
+ *
+ * See #grl_pls_browse() and #grl_source_browse() function for additional
+ * information and sample code.
+ *
+ * Since: 0.2.6
+ */
+void
+grl_pls_browse_by_spec (GrlSource *source,
+                        GrlSourceBrowseSpec *bs)
+{
+  TotemPlParser *parser;
+  const char *playlist_url;
+  struct _GrlPlsPrivate *priv;
+  GPtrArray *valid_entries;
+
+  grl_pls_init();
+
+  GRL_DEBUG (__FUNCTION__);
+
+  g_return_if_fail (GRL_IS_SOURCE (source));
+  g_return_if_fail (GRL_IS_MEDIA (bs->container));
+  g_return_if_fail (GRL_IS_OPERATION_OPTIONS (bs->options));
+  g_return_if_fail (bs->callback != NULL);
+  g_return_if_fail (grl_source_supported_operations (bs->source) &
+                    GRL_OP_BROWSE);
+  g_return_if_fail (check_options (source, GRL_OP_BROWSE, bs->options));
+
+  priv = g_new0 (struct _GrlPlsPrivate, 1);
+  if (!priv) {
+    return;
+  }
+
+  priv->user_data = bs->user_data;
+  priv->cancellable = g_cancellable_new ();
+  bs->user_data = priv;
+
+  playlist_url = grl_media_get_url (bs->container);
+  if (!playlist_url) {
+    GRL_DEBUG ("%s : Unable to get URL from Media %p", __FUNCTION__, bs->container);
+    grl_pls_browse_report_error (bs, "Unable to get URL from Media");
+    return;
+  }
+
+  if (!grl_pls_media_is_playlist (bs->container)) {
+    GRL_DEBUG ("%s: URI=%s is not a playlist", __FUNCTION__, playlist_url);
+    grl_pls_browse_report_error (bs, "Media is not a playlist");
+    return;
+  }
+
+  /* check if we have the entries cached or not */
+  valid_entries = g_object_get_data (G_OBJECT (bs->container), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
+  if (valid_entries) {
+    GRL_DEBUG ("%s : using cached data bs=%p", __FUNCTION__, bs);
+    g_idle_add ((GSourceFunc) grl_pls_browse_report_results, bs);
+    return;
+  }
+
+  priv->entries = g_array_new (FALSE, FALSE, sizeof(struct _GrlPlsEntry));
+  if (!priv->entries) {
+    grl_pls_browse_report_error (bs, "Not enough memory");
+    return;
+  }
+
+  valid_entries = g_ptr_array_sized_new(16);
+  if (!valid_entries) {
+    grl_pls_browse_report_error (bs, "Not enough memory");
+    return;
+  }
+
+  parser = totem_pl_parser_new ();
+  if (!parser) {
+    grl_pls_browse_report_error (bs, "Error creating playlist parser");
+    return;
+  }
+
+  g_object_set_data_full (G_OBJECT (bs->container),
+      GRL_DATA_PRIV_PLS_VALID_ENTRIES,
+      valid_entries,
+      (GDestroyNotify) grl_pls_valid_entries_ptrarray_free);
+
+  /*
+   * disable-unsafe: if FALSE the parser will not parse unsafe locations,
+   * such as local devices and local files if the playlist isn't local.
+   * This is useful if the library is parsing a playlist from a remote
+   * location such as a website. */
+  g_object_set (parser,
+                "recurse", FALSE,
+                "disable-unsafe", TRUE,
+                NULL);
+  g_signal_connect (G_OBJECT (parser),
+                    "entry-parsed",
+                    G_CALLBACK (grl_pls_playlist_entry_parsed_cb),
+                    priv);
+
+  totem_pl_parser_parse_async (parser,
+                               playlist_url,
+                               FALSE,
+                               priv->cancellable,
+                               grl_pls_playlist_parse_cb,
+                               priv);
+
+  g_object_unref (parser);
 }
 
 /**
@@ -926,10 +1088,7 @@ grl_pls_browse (GrlSource *source,
                 GrlSourceResultCb callback,
                 gpointer userdata)
 {
-  TotemPlParser *parser;
-  const char *playlist_url;
-  struct _GrlPlsPrivate *priv;
-  GPtrArray *valid_entries;
+  GrlSourceBrowseSpec *bs;
 
   grl_pls_init();
 
@@ -943,85 +1102,27 @@ grl_pls_browse (GrlSource *source,
                         GRL_OP_BROWSE, 0);
   g_return_val_if_fail (check_options (source, GRL_OP_BROWSE, options), 0);
 
-  playlist_url = grl_media_get_url (playlist);
-  if (!playlist_url) {
-    GRL_WARNING ("Unable to get URL from Media");
+  bs = g_new0 (GrlSourceBrowseSpec, 1);
+  if (!bs) {
     return 0;
   }
 
-  if (!grl_pls_media_is_playlist (playlist)) {
-    GRL_WARNING ("URI=%s is not a playlist", playlist_url);
-    return 0;
-  }
-
-  priv = g_new0(struct _GrlPlsPrivate, 1);
-  if (!priv) {
-    return 0;
-  }
-
-  priv->source = g_object_ref (source);
-  priv->playlist = g_object_ref (playlist);
+  bs->source = g_object_ref (source);
+  bs->container = g_object_ref (playlist);
   /* TODO: what to do with keys */
-  priv->keys = NULL;
-  priv->options = grl_operation_options_copy (options);
-  priv->callback = callback;
-  priv->userdata = userdata;
-  priv->operation_id = grl_operation_generate_id ();
-  priv->cancellable = g_cancellable_new ();
+  bs->keys = NULL;
+  bs->options = grl_operation_options_copy (options);
+  bs->callback = callback;
+  bs->user_data = userdata;
+  bs->operation_id = grl_operation_generate_id ();
 
-  operation_set_ongoing (source, priv->operation_id, priv);
+  g_hash_table_insert (operations, GUINT_TO_POINTER (bs->operation_id), bs);
 
-  /* check if we have the entries cached or not */
-  valid_entries = g_object_get_data (G_OBJECT (playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES);
-  if (valid_entries) {
-    priv->entries = NULL;
-    GRL_DEBUG ("%s : using cached data priv=%p", __FUNCTION__, priv);
-    g_idle_add ((GSourceFunc) grl_pls_browse_report_results, priv);
-    return priv->operation_id;
-  }
+  operation_set_ongoing (source, bs->operation_id, bs);
 
-  priv->entries = g_array_new (FALSE, FALSE, sizeof(struct _GrlPlsEntry));
-  if (!priv->entries) {
-    return 0;
-  }
+  grl_pls_browse_by_spec (source, bs);
 
-  valid_entries = g_ptr_array_sized_new(16);
-  if (!valid_entries) {
-    return 0;
-  }
-
-  parser = totem_pl_parser_new ();
-  if (!parser) {
-    return 0;
-  }
-
-  g_object_set_data_full (G_OBJECT (playlist), GRL_DATA_PRIV_PLS_VALID_ENTRIES, valid_entries, (GDestroyNotify) grl_pls_valid_entries_ptrarray_free);
-
-  /*
-   * disable-unsafe: if FALSE the parser will not parse unsafe locations,
-   * such as local devices and local files if the playlist isn't local.
-   * This is useful if the library is parsing a playlist from a remote
-   * location such as a website. */
-  g_object_set (parser,
-                "recurse", FALSE,
-                "disable-unsafe", TRUE,
-                NULL);
-  g_signal_connect (G_OBJECT (parser),
-                    "entry-parsed",
-                    G_CALLBACK (grl_pls_playlist_entry_parsed_cb),
-                    priv);
-  GRL_DEBUG ("g_signal_connect, priv=%p", priv);
-
-  totem_pl_parser_parse_async (parser,
-                               playlist_url,
-                               FALSE,
-                               priv->cancellable,
-                               grl_pls_playlist_parse_cb,
-                               priv);
-
-  g_object_unref (parser);
-
-  return priv->operation_id;
+  return bs->operation_id;
 }
 
 static void
