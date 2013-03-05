@@ -31,6 +31,9 @@ gboolean grl_pls_file_is_playlist (const gchar *filename);
 
 gboolean grl_pls_media_is_playlist (GrlMedia *media);
 
+void grl_pls_browse_by_spec (GrlSource *source,
+                             GrlSourceBrowseSpec *bs);
+
 guint grl_pls_browse (GrlSource *source,
                       GrlMedia *playlist,
                       const GList *keys,
