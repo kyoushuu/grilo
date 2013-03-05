@@ -13,10 +13,9 @@ GRL_LOG_DOMAIN_STATIC(example_log_domain);
 
 #define BROWSE_CHUNK_SIZE 10
 
-static void source_browser (gpointer data,
-                            gpointer user_data);
-static void element_browser (gpointer data,
-                             gpointer user_data);
+static void source_browser (GrlSource *source, GrlMedia *media);
+
+static void element_browser (gpointer data, gpointer user_data);
 
 static void
 element_browser (gpointer data,
@@ -56,11 +55,9 @@ out:
 }
 
 static void
-source_browser (gpointer data,
-                gpointer user_data)
+source_browser (GrlSource *source,
+                GrlMedia *media)
 {
-  GrlSource *source = GRL_SOURCE (data);
-  GrlMedia *media = GRL_MEDIA (user_data);
   GList *media_elements;
   GError *error = NULL;
   GList *keys;
@@ -115,10 +112,11 @@ out:
 }
 
 static void
-load_plugins (void)
+load_plugins (gchar *browse_path)
 {
   GrlRegistry *registry;
   GrlSource *source;
+  GrlMedia *media = NULL;
   GError *error = NULL;
 
   registry = grl_registry_get_default ();
@@ -131,11 +129,46 @@ load_plugins (void)
   if (!source)
     g_error ("Unable to load grl-filesystem plugin");
 
-  source_browser (source, NULL);
+  if (browse_path) {
+    GError *error = NULL;
+    GList *keys;
+    GrlOperationOptions *options;
+    GrlCaps *caps;
+    gchar *file_uri;
+
+    if (!(grl_source_supported_operations (source) & GRL_OP_MEDIA_FROM_URI))
+      g_error ("Unable to get media from URI");
+
+    keys = grl_metadata_key_list_new (GRL_METADATA_KEY_TITLE, GRL_METADATA_KEY_URL, GRL_METADATA_KEY_MIME, NULL);
+    if (!keys)
+      g_error ("Unable to create key list");
+
+    caps = grl_source_get_caps (source, GRL_OP_MEDIA_FROM_URI);
+    if (!caps)
+      g_error ("Unable to get source caps");
+
+    options = grl_operation_options_new (caps);
+    if (!options)
+      g_error ("Unable to create operation options");
+
+    file_uri = g_filename_to_uri (browse_path, NULL, &error);
+    if (!file_uri)
+      g_error ("Unable to get URI");
+
+    media = grl_source_get_media_from_uri_sync (source, file_uri, keys, options, &error);
+    if (!media)
+      g_error ("Unable to get GrlMedia for path %s", browse_path);
+
+    g_free (file_uri);
+    g_object_unref (caps);
+    g_object_unref (options);
+  }
+
+  source_browser (source, media);
 }
 
 static void
-config_plugins (gchar* chosen_test_path)
+config_plugins (gchar* base_path)
 {
   GrlRegistry *registry;
   GrlConfig *config;
@@ -144,7 +177,7 @@ config_plugins (gchar* chosen_test_path)
 
   /* Configure plugin */
   config = grl_config_new ("grl-filesystem", "Filesystem");
-  grl_config_set_string (config, "base-path", chosen_test_path);
+  grl_config_set_string (config, "base-path", base_path);
   grl_registry_add_config (registry, config, NULL);
 }
 
@@ -152,19 +185,22 @@ gint
 main (int     argc,
       gchar  *argv[])
 {
-  gchar *chosen_test_path;
+  gchar *base_path;
+  gchar *browse_path;
+
   grl_init (&argc, &argv);
   GRL_LOG_DOMAIN_INIT (example_log_domain, "example");
 
-  if (argc != 2) {
-    g_printf ("Usage: %s <path to browse>\n", argv[0]);
+  if (argc != 2 && argc != 3) {
+    g_printf ("Usage: %s <base path> [browse path]\n", argv[0]);
     return 1;
   }
 
-  chosen_test_path = argv[1];
+  base_path = argv[1];
+  browse_path = argc == 3 ? argv[2] : NULL;
 
-  config_plugins (chosen_test_path);
-  load_plugins ();
+  config_plugins (base_path);
+  load_plugins (browse_path);
 
   return 0;
 }
