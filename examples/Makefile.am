@@ -1,12 +1,14 @@
 AM_CFLAGS = $(DEPS_CFLAGS) -I$(top_srcdir)/src -I$(top_srcdir)/src/data
 LDADD = $(DEPS_LIBS) $(top_builddir)/src/lib@GRL_NAME@.la
 
-noinst_PROGRAMS = browsing browsing-filesystem browsing-pls configuring-plugins efficient-metadata-resolution	\
+noinst_PROGRAMS = browsing browsing-filesystem browsing-playlist browsing-pls configuring-plugins efficient-metadata-resolution	\
 	loading-plugins multivalues searching
 
 browsing_SOURCES = browsing.c
 
 browsing_filesystem_SOURCES = browsing-filesystem.c
+
+browsing_playlist_SOURCES = browsing-playlist.c
 
 browsing_pls_SOURCES = browsing-pls.c
 browsing_pls_LDADD = $(LDADD) $(top_builddir)/libs/pls/libgrlpls-@GRL_MAJORMINOR@.la
