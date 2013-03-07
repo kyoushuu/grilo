@@ -861,8 +861,8 @@ grl_pls_browse_report_results (GrlSourceBrowseSpec *bs)
       GUINT_TO_POINTER (bs->operation_id)) == NULL;
 
   if (!called_from_plugin) {
-    operation_set_finished (bs->operation_id);
     operation_set_completed (bs->operation_id);
+    operation_set_finished (bs->operation_id);
     g_hash_table_remove (operations, GUINT_TO_POINTER (bs->operation_id));
   }
 
