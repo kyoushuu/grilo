@@ -458,7 +458,6 @@ grl_pls_cancel_cb (struct OperationState *op_state)
  *
  * Returns: TRUE if mime type is a playlist recognized mime type
  *
- * Since: 0.2.6
  */
 gboolean
 grl_pls_mime_is_playlist (const gchar *mime)
@@ -485,7 +484,6 @@ grl_pls_mime_is_playlist (const gchar *mime)
  *
  * Returns: TRUE if a file is recognized as a playlist.
  *
- * Since: 0.2.6
  */
 gboolean
 grl_pls_file_is_playlist (const gchar *filename)
@@ -509,7 +507,6 @@ grl_pls_file_is_playlist (const gchar *filename)
  *
  * Returns: TRUE if a GrlMedia is recognized as a playlist.
  *
- * Since: 0.2.6
  */
 gboolean
 grl_pls_media_is_playlist (GrlMedia *media)
@@ -963,7 +960,6 @@ check_options (GrlSource *source,
  * See #grl_pls_browse() and #grl_source_browse() function for additional
  * information and sample code.
  *
- * Since: 0.2.6
  */
 void
 grl_pls_browse_by_spec (GrlSource *source,
@@ -1088,7 +1084,6 @@ grl_pls_browse_by_spec (GrlSource *source,
  *
  * Returns: the operation identifier
  *
- * Since: 0.2.6
  */
 guint
 grl_pls_browse (GrlSource *source,
@@ -1192,7 +1187,6 @@ multiple_result_async_cb (GrlSource *source,
  * elements. After use g_object_unref() every element and g_list_free() the
  * list.
  *
- * Since: 0.2.6
  */
 GList *
 grl_pls_browse_sync (GrlSource *source,
