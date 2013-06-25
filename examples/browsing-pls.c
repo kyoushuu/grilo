@@ -161,7 +161,6 @@ load_plugins (gchar* playlist)
   if (!media)
     g_error ("Unable to get GrlMedia for playlist %s", playlist);
 
-  g_object_unref (caps);
   g_object_unref (options);
 
   mime = grl_media_get_mime (media);
