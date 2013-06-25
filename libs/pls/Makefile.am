@@ -62,7 +62,7 @@ introspection_sources =	\
 	$(gir_sources)
 
 GrlPls-@GRL_MAJORMINOR@.gir: libgrlpls-@GRL_MAJORMINOR@.la
-GrlPls_@GRL_MAJORMINOR_NORM@_gir_INCLUDES = GObject-2.0
+GrlPls_@GRL_MAJORMINOR_NORM@_gir_INCLUDES = GObject-2.0 Grl-0.2
 GrlPls_@GRL_MAJORMINOR_NORM@_gir_CFLAGS = -I $(top_srcdir)/src \
 	-I $(top_srcdir)/src/data -I $(top_srcdir)/libs
 GrlPls_@GRL_MAJORMINOR_NORM@_gir_LIBS = libgrlpls-@GRL_MAJORMINOR@.la \
