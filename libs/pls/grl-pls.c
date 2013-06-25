@@ -618,7 +618,7 @@ grl_pls_playlist_entry_parsed_cb (TotemPlParser *parser,
   entry.mime = g_strdup (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_CONTENT_TYPE));
   entry.duration = totem_pl_parser_parse_duration (g_hash_table_lookup (metadata, TOTEM_PL_PARSER_FIELD_DURATION), FALSE);
 
-  GRL_DEBUG ("New playlist entry: URI=%s title=%s genre=%s author=%s album=%s thumbnail=%s mime=%s duration=%lld",
+  GRL_DEBUG ("New playlist entry: URI=%s title=%s genre=%s author=%s album=%s thumbnail=%s mime=%s duration=%" G_GINT64_FORMAT,
       entry.uri, entry.title, entry.genre, entry.author, entry.album, entry.thumbnail, entry.mime, entry.duration);
 
   if (priv->entries)
