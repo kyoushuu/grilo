@@ -7,6 +7,7 @@
  */
 
 #include <grilo.h>
+#include <glib/gprintf.h>
 
 #define GRL_LOG_DOMAIN_DEFAULT  example_log_domain
 GRL_LOG_DOMAIN_STATIC(example_log_domain);
